@@ -1,0 +1,31 @@
+name: agri_match_demo
+description: 農家×学生マッチングUXデモアプリ
+publish_to: "none"
+
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  meta: ^1.11.0
+  provider: ^6.1.1
+  google_maps_flutter: ^2.5.0
+  table_calendar: ^3.1.1
+  fl_chart: ^0.66.0
+  firebase_core: ^2.27.1
+  firebase_auth: ^4.17.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/mock/
+
