@@ -1,84 +1,103 @@
-# 農家×学生マッチング UX デモアプリ
+# AgriTech プラットフォーム
 
-短期間で「農家×学生×運営」の価値交換シナリオを体験できるように構築した Flutter 製デモアプリです。実運用機能（決済・本格認証・外部通知など）はモック化し、UX とストーリーテリングに集中しています。
-
-## 主な体験導線
-
-- **ゲストログイン**：ペルソナカードから匿名ログイン。SNS ログインは演出のみ。
-- **募集検索・応募**：ローカル JSON から募集カードを表示し、キーワード/タグ/都道府県フィルタが可能。
-- **承認通知 & チャット**：応募後に擬似承認が自動付与され、チャットスレッドに通知が届く。
-- **チェックイン & 作業完了**：QR/GPS を想定した擬似チェックイン、作業完了でマイルが付与。
-- **マイル可視化**：`fl_chart` によるマイル推移グラフ、履歴一覧表示。
-- **スタジオ予約**：`TableCalendar` で枠選択し、予約完了トースト＆ローディング演出。
-- **フォトログ**：作業写真（ダミー URL）とメモを追加して成果を視覚化。
-- **チュートリアル**：ペルソナ別ガイドを PageView で表示。
-
-デモ進行の詳細は `docs/demo_runbook.md` を参照してください。
-
-## 技術スタック
-
-- Flutter 3 / Dart 3
-- 状態管理：`provider`
-- UI：Material 3 テーマ、`fl_chart`、`table_calendar`
-- Map：`google_maps_flutter`（lite モード）
-- Backend 代替：ローカル JSON（`assets/mock/`）
-- Firebase Auth：匿名ログインをモック（`firebase_auth` / `firebase_core` をインポート済み）
+農家・就農希望者・運営向けのダッシュボード体験を検証するためのモノリポジトリです。  
+フロントエンドは Next.js + Chakra UI、バックエンドは Express + TypeScript で実装されており、チャット機能を中心にモックデータと地図リソースを組み合わせて動作します。
 
 ## ディレクトリ構成
 
-```
-assets/mock/        # 募集・マイル・予約・チャットのモック JSON
-docs/               # UX 設計資料・デモ台本
-lib/
-  app.dart          # アプリエントリ・テーマ適用
-  main.dart         # runApp
-  data/             # モデルとモックリポジトリ
-  screens/          # 画面群（ホーム/詳細/チャット/マイル/予約/マイページ など）
-  state/            # AppState（モックデータ読込・状態遷移）
-  theme/            # Material 3 テーマ設定
-  widgets/          # 共通 UI（地図プレビューなど）
+```text
+.
+├── backend/    # Express ベースのチャット用モック API サーバー
+├── frontend/   # Next.js 製ダッシュボード UI（農家/ワーカー/管理者）
+└── date/       # 豊橋市周辺の地図・資料（GML, PDF）
 ```
 
-## セットアップ
+## 必要要件
 
-1. Flutter 3.16 以降をインストール（`flutter --version` で確認）。
-2. 依存関係の取得：
-   ```sh
-   flutter pub get
-   ```
-3. Google Maps API キーを取得し、`android/app/src/main/AndroidManifest.xml` と `ios/Runner/AppDelegate.swift`（または `Info.plist`）へ設定。デモのみの場合は未設定でも動作しますが、地図がグレー表示になります。
+- Node.js 20 以降（LTS 推奨）
+- npm 10 以降
 
-### Firebase 設定（任意）
+## セットアップ手順
 
-匿名ログイン演出のみのため設定は必須ではありません。実機で Firebase 初期化を行う場合は `flutterfire configure` で生成される `firebase_options.dart` を `lib/` に配置し、`main.dart` で `Firebase.initializeApp` を呼び出してください。
+```bash
+git clone https://github.com/32Lwk/AgriTech.git
+cd AgriTech
 
-## 実行方法
-
-```sh
-flutter run
+# 依存関係のインストール
+npm --prefix backend install
+npm --prefix frontend install
 ```
 
-Web/モバイルの両方で動作します。デモ環境ではゲストログイン→ホーム→募集詳細→チャット→チェックイン→マイル→予約→マイページの順に操作すると、価値交換ストーリーが確認できます。
+## バックエンド（`backend/`）
 
-## スクリプト・推奨コマンド
+- `npm run dev` : http://localhost:4000 で開発用サーバーを起動
+- `npm run build && npm start` : 本番想定ビルドと実行
+- `npm run dev:all` : `concurrently` を使ってバックエンドとフロントエンドを同時起動
+- `npm run sync-types` : 型定義を `frontend/src/shared-types/backend/` にコピー
+- 主要エンドポイントとリクエスト例は `backend/docs/chat-api-samples.http` を参照
 
-- 静的解析：
-  ```sh
-  flutter analyze
-  ```
-- テスト（現状サンプルなし）：
-  ```sh
-  flutter test
-  ```
+チャット関連 API は全て `backend/src/types/chat.ts` の Zod スキーマでバリデーションされます。データは `backend/src/store/mockData.ts` のインメモリ構造を利用し、DM・グループ・一斉連絡スレッド、既読管理、案件参加者一覧などを提供します。
 
-## 今後の拡張想定
+### エンドポイント一覧（抜粋）
 
-- 決済・本人確認：外部サービス（Stripe、eKYC）連携
-- RBAC・データ永続化：Firestore／Cloud Functions との統合
-- 実通知：Firebase Cloud Messaging / SendGrid / Twilio
-- バックアップ・セキュリティ：自動バックアップと監査ログ
+| Method | Path | 説明 |
+| ------ | ---- | ---- |
+| GET | `/health` | ヘルスチェック |
+| GET | `/api/chat/opportunities?farmerId=farmer-001` | 農家が管理する案件と参加者一覧 |
+| GET | `/api/chat/threads?farmerId=farmer-001&includeClosed=false` | チャットスレッド一覧 |
+| GET | `/api/chat/threads/:threadId?farmerId=farmer-001` | メッセージ履歴と詳細 |
+| POST | `/api/chat/threads/dm` | 応募者との DM スレッド作成 |
+| POST | `/api/chat/threads/group` | 案件参加者とのグループスレッド作成 |
+| POST | `/api/chat/threads/:threadId/messages?farmerId=farmer-001` | メッセージ送信 |
+| POST | `/api/chat/threads/:threadId/read` | 既読状態の更新 |
+| POST | `/api/chat/opportunities/:opportunityId/broadcast` | 案件参加者全員への一斉送信 |
+
+## フロントエンド（`frontend/`）
+
+- `npm run dev` : http://localhost:3000 で開発用 Next.js サーバーを起動
+- `npm run build && npm start` : 本番ビルドと起動
+- Chakra UI と React Hook Form を利用したダッシュボード UI、Leaflet ベースの地図、Farmer Dashboard のチャットセンターなどを実装
+
+環境変数:
+
+```bash
+# 既定値は http://localhost:4000/api/chat
+export NEXT_PUBLIC_FARMER_CHAT_API_BASE="http://localhost:4000/api/chat"
+```
+
+フロントエンドからは `frontend/src/features/dashboard/farmer/components/FarmerChatCenter.tsx` を中心にチャット API を呼び出します。ログインコンテキスト（`frontend/src/features/auth/AuthContext.tsx`）内のモックユーザーで認証状態を切り替え可能です。
+
+### モックユーザー（代表例）
+
+- 農家: `farmer@example.com / password123`
+- ワーカー: `worker@example.com / password123`
+- 管理者: `admin@example.com / password123`
+
+## 型の共有
+
+バックエンドの型をフロントで参照する場合は、以下を実行してください。
+
+```bash
+npm --prefix backend run sync-types
+```
+
+`backend/src/types/*.ts` が `frontend/src/shared-types/backend/` にコピーされ、`@/shared-types/chat` からインポートできます。
+
+## モックデータと地図リソース
+
+- `frontend/src/mock-data/` : 案件、参加者、指標などの大量モックデータ
+- `frontend/scripts/*.js` : 案件位置の検証や地図エクスポートなど開発補助スクリプト
+- `date/geojson/*.gml` : 豊橋市周辺の地理情報（GML）
+- `date/全体図.pdf` : プロジェクト全体像の資料
+
+## 開発時のヒント
+
+- REST クライアント用リクエストは `backend/docs/chat-api-samples.http` を VS Code REST Client や Thunder Client で読み込めます。
+- UI カスタマイズは Chakra UI コンポーネント、地図は `frontend/src/components/map/LeafletMapInner.tsx` を起点に調整します。
+- `npm --prefix backend run dev:all` を使うと、バックエンドとフロントエンドを同時に起動してチャットの疎通確認が容易になります。
 
 ## ライセンス
 
-本リポジトリはデモ用途での利用を想定しています。商用利用・再配布を行う場合は別途ご相談ください。
+現時点で OSS ライセンスは明記されていません。必要に応じてプロジェクト方針に合わせて追加してください。
+
 

@@ -1,0 +1,63 @@
+### Health check
+GET http://localhost:4000/health
+
+### List opportunities with participants
+GET http://localhost:4000/api/chat/opportunities?farmerId=farmer-001
+
+### List threads (open/in-progress only)
+GET http://localhost:4000/api/chat/threads?farmerId=farmer-001&includeClosed=false
+
+### Get thread detail
+@threadId = REPLACE_WITH_THREAD_ID
+GET http://localhost:4000/api/chat/threads/{{threadId}}?farmerId=farmer-001
+
+### Start a DM thread (optional initial message)
+POST http://localhost:4000/api/chat/threads/dm
+Content-Type: application/json
+
+{
+  "farmerId": "farmer-001",
+  "applicantId": "applicant-003",
+  "opportunityId": "opportunity-001",
+  "initialMessage": {
+    "body": "こんにちは！集合時間は6:30です。"
+  }
+}
+
+### Create a group thread
+POST http://localhost:4000/api/chat/threads/group
+Content-Type: application/json
+
+{
+  "farmerId": "farmer-001",
+  "opportunityId": "opportunity-003",
+  "name": "キャベツ定植チーム",
+  "participantIds": ["applicant-003", "applicant-005"]
+}
+
+### Send a message to an existing thread
+POST http://localhost:4000/api/chat/threads/{{threadId}}/messages?farmerId=farmer-001
+Content-Type: application/json
+
+{
+  "authorId": "farmer-001",
+  "authorRole": "farmer",
+  "body": "明日の集合場所はハウス前です。"
+}
+
+### Mark thread as read
+POST http://localhost:4000/api/chat/threads/{{threadId}}/read
+Content-Type: application/json
+
+{
+  "farmerId": "farmer-001"
+}
+
+### Broadcast message to all participants of an opportunity
+POST http://localhost:4000/api/chat/opportunities/opportunity-001/broadcast
+Content-Type: application/json
+
+{
+  "farmerId": "farmer-001",
+  "body": "明日は雨予報のためカッパを持参してください。"
+}
