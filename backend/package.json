@@ -16,6 +16,7 @@
     "dev:all": "npx concurrently \"npm run dev\" \"npm --prefix ../frontend run dev\"",
     "prepare": "npm run build",
     "db:seed": "ts-node prisma/seed.ts",
+    "db:seed-farmlands": "ts-node scripts/seedFarmlands.ts",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate"
   },

@@ -168,6 +168,7 @@ export const FarmerChatCenter = ({
   focusSignal,
   onUnreadChange,
 }: FarmerChatCenterProps) => {
+  console.log(`[FarmerChatCenter] Initialized with farmerId: ${farmerId}, farmerDisplayName: ${farmerDisplayName}`);
   const toast = useToast();
   const dmModal = useDisclosure();
   const groupModal = useDisclosure();
@@ -301,14 +302,19 @@ export const FarmerChatCenter = ({
 
   const fetchThreads = useCallback(
     async ({ signal }: { signal?: AbortSignal } = {}) => {
-      if (!farmerId) return;
+      if (!farmerId) {
+        console.warn("[fetchThreads] farmerId is not set");
+        return;
+      }
+      console.log(`[fetchThreads] Starting fetch for farmerId: ${farmerId}`);
       setLoadingThreads(true);
       try {
         const data = await chatApi.listThreads(farmerId, {
           includeClosed,
           signal,
         });
-        const composed: ComposedThread[] = data.map(enhanceThreadSummary);
+        console.log(`[fetchThreads] Received ${data?.length || 0} threads`);
+        const composed: ComposedThread[] = (data || []).map(enhanceThreadSummary);
         setThreads(composed);
         if (composed.length > 0) {
           const current = threadsRef.current.find((item) => item.id === activeThreadId);
@@ -318,10 +324,17 @@ export const FarmerChatCenter = ({
           setActiveThreadId(null);
         }
       } catch (error) {
-        console.error(error);
+        // AbortErrorはReact StrictModeによる二重マウントによる正常な動作なので無視
+        if (error instanceof Error && error.name === "AbortError") {
+          console.log("[fetchThreads] Request aborted (normal in development)");
+          return;
+        }
+        console.error("[fetchThreads] Error:", error);
         toast({
           title: "チャットスレッドの取得に失敗しました",
+          description: error instanceof Error ? error.message : "不明なエラーが発生しました",
           status: "error",
+          duration: 5000,
         });
       } finally {
         setLoadingThreads(false);
@@ -332,14 +345,30 @@ export const FarmerChatCenter = ({
 
   const fetchOpportunities = useCallback(
     async ({ signal }: { signal?: AbortSignal } = {}) => {
-      if (!farmerId) return;
+      if (!farmerId) {
+        console.warn("[fetchOpportunities] farmerId is not set");
+        return;
+      }
+      console.log(`[fetchOpportunities] Starting fetch for farmerId: ${farmerId}`);
       setLoadingOpportunities(true);
       try {
         const data = await chatApi.listOpportunities(farmerId, { signal });
-        setOpportunities(data);
+        console.log(`[fetchOpportunities] Received ${data?.length || 0} opportunities`);
+        setOpportunities(data || []);
       } catch (error) {
-        console.error(error);
-        toast({ title: "案件情報の取得に失敗しました", status: "error" });
+        // AbortErrorはReact StrictModeによる二重マウントによる正常な動作なので無視
+        if (error instanceof Error && error.name === "AbortError") {
+          console.log("[fetchOpportunities] Request aborted (normal in development)");
+          return;
+        }
+        console.error("[fetchOpportunities] Error:", error);
+        toast({ 
+          title: "案件情報の取得に失敗しました",
+          description: error instanceof Error ? error.message : "不明なエラーが発生しました",
+          status: "error",
+          duration: 5000,
+        });
+        setOpportunities([]); // エラー時は空配列を設定
       } finally {
         setLoadingOpportunities(false);
       }
@@ -354,7 +383,11 @@ export const FarmerChatCenter = ({
       try {
         const detail = await chatApi.getThreadDetail(threadId, farmerId);
         setThreadDetail(detail);
-        await chatApi.markThreadRead(threadId, { farmerId });
+        // 既読マークは失敗しても続行（非同期で実行）
+        chatApi.markThreadRead(threadId, { farmerId }).catch((error) => {
+          console.warn("Failed to mark thread as read:", error);
+          // エラーを無視（既読マークの失敗は致命的ではない）
+        });
         setThreads((prev) =>
           prev.map((thread) =>
             thread.id === detail.thread.id ? { ...thread, unreadCount: 0 } : thread,
@@ -651,7 +684,7 @@ export const FarmerChatCenter = ({
           >
             <option value="active">開催中の案件</option>
             <option value="all">すべての案件</option>
-            {opportunities.map((opportunity) => (
+            {opportunities?.map((opportunity) => (
               <option key={opportunity.id} value={opportunity.id}>
                 {opportunity.title}
               </option>

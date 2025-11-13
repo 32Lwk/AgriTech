@@ -37,21 +37,41 @@ const request = async <T>(
     signal?: AbortSignal;
   } = {},
 ): Promise<T> => {
-  const response = await fetch(buildUrl(path, searchParams), {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal,
-  });
+  const url = buildUrl(path, searchParams);
+  console.log(`[API Request] ${method} ${url}`);
+  
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
+    console.log(`[API Response] ${method} ${url} - Status: ${response.status}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[API Error] ${method} ${url} - ${response.status}: ${errorText}`);
+      throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    console.log(`[API Success] ${method} ${url} - Data:`, data);
+    return data as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      console.log(`[API Aborted] ${method} ${url}`);
+      throw error;
+    }
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      console.error(`[API Network Error] ${method} ${url} - Backend server may not be running`);
+      throw new Error("バックエンドサーバーに接続できません。サーバーが起動しているか確認してください。");
+    }
+    throw error;
   }
-
-  return (await response.json()) as T;
 };
 
 export const chatApi = {

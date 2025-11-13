@@ -25,10 +25,12 @@ import {
   useDisclosure,
   useToast,
   IconButton,
+  FormHelperText,
 } from "@chakra-ui/react";
-import { FiEdit, FiTrash2, FiPlus, FiX } from "react-icons/fi";
+import { FiEdit, FiTrash2, FiPlus, FiX, FiMapPin } from "react-icons/fi";
 import { farmlandsApi, type Farmland, type CreateFarmlandPayload, type UpdateFarmlandPayload } from "../api/farmlands";
 import { uploadApi } from "../api/upload";
+import LeafletMap from "@/components/map/LeafletMap";
 
 interface FarmlandManagerProps {
   farmerId: string;
@@ -45,12 +47,14 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
   const [formData, setFormData] = useState<CreateFarmlandPayload>({
     farmerId,
     name: "",
-    address: "",
-    prefecture: "",
-    city: "",
+    latitude: undefined,
+    longitude: undefined,
     description: "",
+    imageUrls: [],
   });
-  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
 
   const fetchFarmlands = useCallback(async () => {
     if (!farmerId) return;
@@ -77,27 +81,35 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
     setFormData({
       farmerId,
       name: "",
-      address: "",
-      prefecture: "",
-      city: "",
+      latitude: undefined,
+      longitude: undefined,
       description: "",
+      imageUrls: [],
     });
+    setSelectedLocation(null);
     editModal.onOpen();
   };
 
   const handleEdit = (farmland: Farmland) => {
     setEditingFarmland(farmland);
+    const imageUrls = farmland.imageUrls && Array.isArray(farmland.imageUrls) 
+      ? farmland.imageUrls 
+      : farmland.imageUrl 
+        ? [farmland.imageUrl] 
+        : [];
     setFormData({
       farmerId,
       name: farmland.name,
-      address: farmland.address,
-      prefecture: farmland.prefecture,
-      city: farmland.city,
       latitude: farmland.latitude ?? undefined,
       longitude: farmland.longitude ?? undefined,
-      imageUrl: farmland.imageUrl ?? undefined,
+      imageUrls,
       description: farmland.description ?? undefined,
     });
+    if (farmland.latitude && farmland.longitude) {
+      setSelectedLocation({ lat: farmland.latitude, lng: farmland.longitude });
+    } else {
+      setSelectedLocation(null);
+    }
     editModal.onOpen();
   };
 
@@ -113,26 +125,158 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
     }
   };
 
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setUploadingImage(true);
-    try {
-      const uploaded = await uploadApi.uploadFile(file);
-      setFormData((prev) => ({ ...prev, imageUrl: uploaded.url }));
-      toast({ title: "画像をアップロードしました", status: "success" });
-    } catch (error) {
-      console.error(error);
-      toast({ title: "画像のアップロードに失敗しました", status: "error" });
-    } finally {
-      setUploadingImage(false);
-      event.target.value = "";
+  const handleGetCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast({
+        title: "現在地の取得に対応していません",
+        description: "お使いのブラウザはGeolocation APIに対応していません。",
+        status: "error",
+      });
+      return;
     }
+
+    setGettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setSelectedLocation({ lat: latitude, lng: longitude });
+        setFormData((prev) => ({ ...prev, latitude, longitude }));
+        setGettingLocation(false);
+        toast({
+          title: "現在地を取得しました",
+          status: "success",
+        });
+      },
+      (error) => {
+        setGettingLocation(false);
+        let errorMessage = "現在地の取得に失敗しました";
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMessage = "位置情報の使用が拒否されました。ブラウザの設定を確認してください。";
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMessage = "位置情報が利用できません。";
+        } else if (error.code === error.TIMEOUT) {
+          errorMessage = "位置情報の取得がタイムアウトしました。";
+        }
+        toast({
+          title: errorMessage,
+          status: "error",
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  }, [toast]);
+
+  const handleMapClick = (lat: number, lng: number) => {
+    setSelectedLocation({ lat, lng });
+    setFormData((prev) => ({ ...prev, latitude: lat, longitude: lng }));
+  };
+
+  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    const remainingSlots = 10 - (formData.imageUrls?.length || 0);
+    if (files.length > remainingSlots) {
+      toast({
+        title: `画像は最大10件までアップロードできます。残り${remainingSlots}件です。`,
+        status: "warning",
+      });
+      return;
+    }
+
+    // プレビュー用にファイルを読み込み
+    const fileReaders: Promise<string>[] = files.map((file) => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            resolve(e.target.result as string);
+          } else {
+            reject(new Error("ファイルの読み込みに失敗しました"));
+          }
+        };
+        reader.onerror = () => reject(new Error("ファイルの読み込みエラー"));
+        reader.readAsDataURL(file);
+      });
+    });
+
+    // プレビューを表示してからアップロード
+    setUploadingImages(true);
+    Promise.all(fileReaders)
+      .then((previews) => {
+        // プレビューを即座に表示（一時的なURL）
+        const tempUrls = previews.map((preview) => preview);
+        setFormData((prev) => ({
+          ...prev,
+          imageUrls: [...(prev.imageUrls || []), ...tempUrls],
+        }));
+
+        // バックエンドにアップロード
+        const uploadPromises = files.map((file) => uploadApi.uploadFile(file));
+        return Promise.all(uploadPromises);
+      })
+      .then((uploaded) => {
+        // 一時的なプレビューURLを実際のアップロードURLに置き換え
+        setFormData((prev) => {
+          const tempCount = files.length;
+          const withoutTemp = (prev.imageUrls || []).slice(0, -tempCount);
+          const serverUrls = uploaded.map((u) => {
+            // バックエンドからのURLが相対パスの場合、フルURLに変換
+            if (u.url.startsWith("/")) {
+              const apiBase = typeof window !== "undefined" 
+                ? (process.env.NEXT_PUBLIC_UPLOAD_API_BASE || "http://localhost:4000")
+                : "http://localhost:4000";
+              return u.url.startsWith("/uploads") ? `${apiBase.replace("/api/upload", "")}${u.url}` : `${apiBase}${u.url}`;
+            }
+            return u.url;
+          });
+          return {
+            ...prev,
+            imageUrls: [...withoutTemp, ...serverUrls],
+          };
+        });
+        setUploadingImages(false);
+        toast({
+          title: `${uploaded.length}件の画像をアップロードしました`,
+          status: "success",
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+        // エラー時は一時的なプレビューを削除
+        setFormData((prev) => ({
+          ...prev,
+          imageUrls: (prev.imageUrls || []).slice(0, -files.length),
+        }));
+        setUploadingImages(false);
+        toast({
+          title: "画像のアップロードに失敗しました",
+          status: "error",
+        });
+      })
+      .finally(() => {
+        event.target.value = "";
+      });
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      imageUrls: (prev.imageUrls || []).filter((_, i) => i !== index),
+    }));
   };
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.address.trim() || !formData.prefecture.trim() || !formData.city.trim()) {
-      toast({ title: "必須項目を入力してください", status: "error" });
+    if (!formData.name.trim()) {
+      toast({ title: "農地名称を入力してください", status: "error" });
+      return;
+    }
+    if (!formData.latitude || !formData.longitude) {
+      toast({ title: "マップで位置を選択してください", status: "error" });
       return;
     }
 
@@ -140,12 +284,9 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
       if (editingFarmland) {
         const updatePayload: UpdateFarmlandPayload = {
           name: formData.name,
-          address: formData.address,
-          prefecture: formData.prefecture,
-          city: formData.city,
           latitude: formData.latitude,
           longitude: formData.longitude,
-          imageUrl: formData.imageUrl,
+          imageUrls: formData.imageUrls,
           description: formData.description,
         };
         await farmlandsApi.updateFarmland(editingFarmland.id, farmerId, updatePayload);
@@ -191,51 +332,62 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
                 </Card>
               ) : (
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                  {farmlands.map((farmland) => (
-                    <Card key={farmland.id} variant="outline">
-                      <CardBody>
-                        <Stack spacing={3}>
-                          {farmland.imageUrl && (
-                            <Box borderRadius="md" overflow="hidden">
-                              <Image src={farmland.imageUrl} alt={farmland.name} w="100%" h="120px" objectFit="cover" />
-                            </Box>
-                          )}
-                          <Stack spacing={1}>
-                            <Text fontWeight="semibold">{farmland.name}</Text>
-                            <Text fontSize="xs" color="gray.600">
-                              {farmland.prefecture} {farmland.city}
-                            </Text>
-                            <Text fontSize="xs" color="gray.500">
-                              {farmland.address}
-                            </Text>
-                            {farmland.description && (
-                              <Text fontSize="xs" color="gray.600" noOfLines={2}>
-                                {farmland.description}
-                              </Text>
+                  {farmlands.map((farmland) => {
+                    const imageUrls = farmland.imageUrls && Array.isArray(farmland.imageUrls) 
+                      ? farmland.imageUrls 
+                      : farmland.imageUrl 
+                        ? [farmland.imageUrl] 
+                        : [];
+                    return (
+                      <Card key={farmland.id} variant="outline">
+                        <CardBody>
+                          <Stack spacing={3}>
+                            {imageUrls.length > 0 && (
+                              <Box borderRadius="md" overflow="hidden">
+                                <Image src={imageUrls[0]} alt={farmland.name} w="100%" h="120px" objectFit="cover" />
+                                {imageUrls.length > 1 && (
+                                  <Text fontSize="xs" color="gray.500" mt={1} textAlign="center">
+                                    他 {imageUrls.length - 1} 枚
+                                  </Text>
+                                )}
+                              </Box>
                             )}
+                            <Stack spacing={1}>
+                              <Text fontWeight="semibold">{farmland.name}</Text>
+                              {farmland.latitude && farmland.longitude && (
+                                <Text fontSize="xs" color="gray.600">
+                                  緯度: {farmland.latitude.toFixed(6)}, 経度: {farmland.longitude.toFixed(6)}
+                                </Text>
+                              )}
+                              {farmland.description && (
+                                <Text fontSize="xs" color="gray.600" noOfLines={2}>
+                                  {farmland.description}
+                                </Text>
+                              )}
+                            </Stack>
+                            <HStack spacing={2}>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                leftIcon={<FiEdit />}
+                                onClick={() => handleEdit(farmland)}
+                              >
+                                編集
+                              </Button>
+                              <IconButton
+                                size="xs"
+                                variant="outline"
+                                colorScheme="red"
+                                aria-label="削除"
+                                icon={<FiTrash2 />}
+                                onClick={() => handleDelete(farmland.id)}
+                              />
+                            </HStack>
                           </Stack>
-                          <HStack spacing={2}>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              leftIcon={<FiEdit />}
-                              onClick={() => handleEdit(farmland)}
-                            >
-                              編集
-                            </Button>
-                            <IconButton
-                              size="xs"
-                              variant="outline"
-                              colorScheme="red"
-                              aria-label="削除"
-                              icon={<FiTrash2 />}
-                              onClick={() => handleDelete(farmland.id)}
-                            />
-                          </HStack>
-                        </Stack>
-                      </CardBody>
-                    </Card>
-                  ))}
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
                 </SimpleGrid>
               )}
             </Stack>
@@ -264,81 +416,115 @@ export function FarmlandManager({ farmerId, isOpen, onClose }: FarmlandManagerPr
                 />
               </FormControl>
               <FormControl isRequired>
-                <FormLabel>都道府県</FormLabel>
-                <Input
-                  value={formData.prefecture}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, prefecture: e.target.value }))}
-                  placeholder="例：愛知県"
-                />
-              </FormControl>
-              <FormControl isRequired>
-                <FormLabel>市区町村</FormLabel>
-                <Input
-                  value={formData.city}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, city: e.target.value }))}
-                  placeholder="例：豊橋市"
-                />
-              </FormControl>
-              <FormControl isRequired>
-                <FormLabel>住所</FormLabel>
-                <Input
-                  value={formData.address}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
-                  placeholder="例：石巻町123-45"
-                />
-              </FormControl>
-              <FormControl>
-                <FormLabel>緯度（オプション）</FormLabel>
-                <Input
-                  type="number"
-                  step="any"
-                  value={formData.latitude ?? ""}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      latitude: e.target.value ? parseFloat(e.target.value) : undefined,
-                    }))
-                  }
-                  placeholder="例：34.7654"
-                />
-              </FormControl>
-              <FormControl>
-                <FormLabel>経度（オプション）</FormLabel>
-                <Input
-                  type="number"
-                  step="any"
-                  value={formData.longitude ?? ""}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      longitude: e.target.value ? parseFloat(e.target.value) : undefined,
-                    }))
-                  }
-                  placeholder="例：137.3921"
-                />
+                <FormLabel>位置</FormLabel>
+                <FormHelperText fontSize="xs" mb={2}>
+                  マップをクリックして位置を選択するか、現在地ボタンを使用してください。
+                </FormHelperText>
+                <HStack spacing={2} mb={2}>
+                  <Button
+                    size="sm"
+                    leftIcon={<FiMapPin />}
+                    onClick={handleGetCurrentLocation}
+                    isLoading={gettingLocation}
+                    loadingText="取得中..."
+                    variant="outline"
+                    colorScheme="green"
+                  >
+                    現在地を使用
+                  </Button>
+                </HStack>
+                <Box borderRadius="md" overflow="hidden" borderWidth="1px" mb={2}>
+                  <LeafletMap
+                    markers={
+                      selectedLocation
+                        ? [
+                            {
+                              id: "selected-location",
+                              position: [selectedLocation.lat, selectedLocation.lng],
+                              title: "選択された位置",
+                              variant: "default",
+                            },
+                          ]
+                        : []
+                    }
+                    center={selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [35.6812, 139.7671]}
+                    zoom={selectedLocation ? 15 : 13}
+                    height={300}
+                    onMapClick={handleMapClick}
+                    showPopups={true}
+                  />
+                </Box>
+                {selectedLocation && (
+                  <Text fontSize="xs" color="green.600">
+                    緯度: {selectedLocation.lat.toFixed(6)}, 経度: {selectedLocation.lng.toFixed(6)}
+                  </Text>
+                )}
               </FormControl>
               <FormControl>
                 <FormLabel>農地画像</FormLabel>
-                {formData.imageUrl && (
-                  <Box mb={2}>
-                    <Image src={formData.imageUrl} alt="農地画像" maxH="200px" borderRadius="md" />
-                    <Button
-                      size="xs"
-                      mt={2}
-                      leftIcon={<FiX />}
-                      onClick={() => setFormData((prev) => ({ ...prev, imageUrl: undefined }))}
-                    >
-                      画像を削除
-                    </Button>
-                  </Box>
-                )}
+                <FormHelperText fontSize="xs" mb={2}>
+                  最大10件までアップロードできます。現在 {(formData.imageUrls?.length || 0)}/10 件
+                </FormHelperText>
                 <Input
                   type="file"
                   accept="image/*"
-                  onChange={handleImageUpload}
-                  disabled={uploadingImage}
+                  multiple
+                  onChange={handleImageSelect}
+                  disabled={uploadingImages || (formData.imageUrls?.length || 0) >= 10}
                 />
-                {uploadingImage && <Text fontSize="xs" color="gray.500">アップロード中...</Text>}
+                {uploadingImages && (
+                  <Text fontSize="xs" color="blue.500" mt={1}>
+                    アップロード中... 画像は選択と同時に確認できます。
+                  </Text>
+                )}
+                {formData.imageUrls && formData.imageUrls.length > 0 && (
+                  <Box mt={3}>
+                    <Text fontSize="xs" color="gray.600" mb={2}>
+                      アップロード済み画像（クリックで拡大表示）
+                    </Text>
+                    <SimpleGrid columns={{ base: 2, md: 3 }} spacing={2}>
+                      {formData.imageUrls.map((url, index) => (
+                        <Box
+                          key={index}
+                          position="relative"
+                          borderRadius="md"
+                          overflow="hidden"
+                          borderWidth="1px"
+                          cursor="pointer"
+                          _hover={{ borderColor: "green.400", borderWidth: "2px" }}
+                          onClick={() => {
+                            // モーダルで拡大表示
+                            const newWindow = window.open();
+                            if (newWindow) {
+                              newWindow.document.write(`<img src="${url}" style="max-width:100%; height:auto;" />`);
+                            }
+                          }}
+                        >
+                          <Image
+                            src={url}
+                            alt={`農地画像 ${index + 1}`}
+                            w="100%"
+                            h="120px"
+                            objectFit="cover"
+                          />
+                          <IconButton
+                            aria-label="画像を削除"
+                            icon={<FiX />}
+                            size="xs"
+                            colorScheme="red"
+                            position="absolute"
+                            top={1}
+                            right={1}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveImage(index);
+                            }}
+                          />
+                        </Box>
+                      ))}
+                    </SimpleGrid>
+                  </Box>
+                )}
               </FormControl>
               <FormControl>
                 <FormLabel>説明（オプション）</FormLabel>

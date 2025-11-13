@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,37 +8,33 @@ datasource db {
 }
 
 model Farmer {
-  id        String   @id @default(uuid())
-  name      String
-  avatarUrl String?
-  tagline   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  opportunities Opportunity[]
-  threads       ChatThread[] @relation("ThreadFarmer")
-  readStates    ThreadReadState[]
-  mileTransactions MileTransaction[]
-  farmlands    Farmland[]
+  id                String              @id @default(uuid())
+  name              String
+  avatarUrl         String?
+  tagline           String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  threads           ChatThread[]        @relation("ThreadFarmer")
+  farmlands         Farmland[]
+  mileTransactions  MileTransaction[]
+  opportunities     Opportunity[]
+  readStates        ThreadReadState[]
 
   @@map("farmers")
 }
 
 model Applicant {
-  id        String   @id @default(uuid())
-  name      String
-  avatarUrl String?
-  age       Int
-  occupation String
-  location  String
-  message   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  opportunityParticipants OpportunityParticipant[]
+  id                      String                   @id @default(uuid())
+  name                    String
+  avatarUrl               String?
+  age                     Int
+  occupation              String
+  location                String
+  message                 String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
   threadParticipants      ChatThreadParticipant[]
+  opportunityParticipants OpportunityParticipant[]
 
   @@map("applicants")
 }
@@ -52,10 +45,18 @@ model Opportunity {
   status            String   // "open" | "in_progress" | "closed"
   startDate         DateTime
   endDate           DateTime
+  startTime         String?  // 開始時間（HH:mm形式）
+  endTime           String?  // 終了時間（HH:mm形式）
   farmName          String
   description       String
+  imageUrls         String?  // JSON配列として保存
+  memo              String?  // メモ
+  rewardMiles       Int      @default(0)  // マイル報酬
   farmerId          String
   farmlandId       String?  // 実施農地のID
+  latitude          Float?   // 手動入力時の緯度
+  longitude         Float?   // 手動入力時の経度
+  address           String?  // 手動入力時の住所
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -71,11 +72,10 @@ model Opportunity {
 }
 
 model OpportunityManager {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   opportunityId String
   farmerId      String
-  createdAt     DateTime @default(now())
-
+  createdAt     DateTime    @default(now())
   opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   @@unique([opportunityId, farmerId])
@@ -83,99 +83,86 @@ model OpportunityManager {
 }
 
 model OpportunityParticipant {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   opportunityId String
   applicantId   String
-  createdAt     DateTime @default(now())
-
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
   applicant     Applicant   @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   @@unique([opportunityId, applicantId])
   @@map("opportunity_participants")
 }
 
 model ChatThread {
-  id            String   @id @default(uuid())
+  id            String                  @id @default(uuid())
   farmerId      String
   opportunityId String
-  type          String   // "dm" | "group" | "broadcast"
+  type          String
   title         String
   lastMessageId String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  // Relations
-  farmer        Farmer   @relation("ThreadFarmer", fields: [farmerId], references: [id])
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  participants  ChatThreadParticipant[]
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
   messages      ChatMessage[]
+  participants  ChatThreadParticipant[]
+  lastMessage   ChatMessage?            @relation("ThreadLastMessage", fields: [lastMessageId], references: [id])
+  opportunity   Opportunity             @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  farmer        Farmer                  @relation("ThreadFarmer", fields: [farmerId], references: [id])
   readStates    ThreadReadState[]
-  lastMessage   ChatMessage? @relation("ThreadLastMessage", fields: [lastMessageId], references: [id])
 
   @@map("chat_threads")
 }
 
 model ChatThreadParticipant {
-  id        String   @id @default(uuid())
-  threadId  String
+  id          String     @id @default(uuid())
+  threadId    String
   applicantId String?
-  createdAt DateTime @default(now())
-
-  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  applicant Applicant? @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  createdAt   DateTime   @default(now())
+  applicant   Applicant? @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  thread      ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   @@unique([threadId, applicantId])
   @@map("chat_thread_participants")
 }
 
 model ChatMessage {
-  id        String   @id @default(uuid())
-  threadId  String
-  authorId  String
-  authorRole String  // "farmer" | "applicant" | "system"
-  body      String
-  createdAt DateTime @default(now())
-
-  // Relations
-  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  id                  String       @id @default(uuid())
+  threadId            String
+  authorId            String
+  authorRole          String
+  body                String
+  createdAt           DateTime     @default(now())
+  thread              ChatThread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
   threadAsLastMessage ChatThread[] @relation("ThreadLastMessage")
 
   @@index([threadId, createdAt])
   @@map("chat_messages")
 }
 
-// FTS5 virtual table for full-text search
-// Note: FTS5 tables are created via raw SQL migration
-
 model ThreadReadState {
-  id        String   @id @default(uuid())
-  threadId  String
-  farmerId  String
-  lastReadAt DateTime @default(now())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  farmer    Farmer     @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  id         String     @id @default(uuid())
+  threadId   String
+  farmerId   String
+  lastReadAt DateTime   @default(now())
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  farmer     Farmer     @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  thread     ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   @@unique([threadId, farmerId])
   @@map("thread_read_states")
 }
 
 model MileTransaction {
-  id          String   @id @default(uuid())
-  farmerId    String
-  type        String   // "earn" | "spend" | "exchange"
-  amount      Int      // Positive for earn, negative for spend
-  description String
+  id            String       @id @default(uuid())
+  farmerId      String
+  type          String
+  amount        Int
+  description   String
   opportunityId String?
-  createdAt   DateTime @default(now())
-
-  // Relations
-  farmer      Farmer   @relation(fields: [farmerId], references: [id], onDelete: Cascade)
-  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
+  farmer        Farmer       @relation(fields: [farmerId], references: [id], onDelete: Cascade)
 
   @@index([farmerId, createdAt])
   @@map("mile_transactions")
@@ -185,12 +172,13 @@ model Farmland {
   id          String   @id @default(uuid())
   farmerId    String
   name        String   // 農地の名称（例：「本圃場」「第2圃場」）
-  address     String   // 住所
-  prefecture  String   // 都道府県
-  city        String   // 市区町村
-  latitude    Float?   // 緯度
-  longitude   Float?   // 経度
-  imageUrl    String?  // 農地の画像URL
+  address     String?  // 住所（オプション）
+  prefecture  String?  // 都道府県（オプション）
+  city        String?  // 市区町村（オプション）
+  latitude    Float    // 緯度（必須）
+  longitude   Float    // 経度（必須）
+  imageUrl    String?  // 農地の画像URL（後方互換性のため残す）
+  imageUrls   String?  // 農地の画像URL（JSON配列として保存）
   description String?  // 農地の説明
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -202,3 +190,4 @@ model Farmland {
   @@index([farmerId])
   @@map("farmlands")
 }
+

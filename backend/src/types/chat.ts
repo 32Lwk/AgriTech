@@ -50,6 +50,7 @@ export interface Opportunity {
   farmland?: FarmlandInfo;
   managingFarmerIds: string[];
   participantIds: string[];
+  participants?: Applicant[]; // Optional for backward compatibility
 }
 
 export interface ThreadParticipant {

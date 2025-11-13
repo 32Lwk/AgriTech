@@ -17,6 +17,7 @@ uploadRouter.post("/", upload.single("file"), (req: Request, res: Response) => {
     size: req.file.size,
   });
 
+  const baseUrl = process.env.API_BASE_URL || "http://localhost:4000";
   res.json({
     success: true,
     file: {
@@ -25,7 +26,7 @@ uploadRouter.post("/", upload.single("file"), (req: Request, res: Response) => {
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      url: `/uploads/${req.file.filename}`,
+      url: `${baseUrl}/uploads/${req.file.filename}`,
     },
   });
 });
@@ -39,6 +40,7 @@ uploadRouter.post("/multiple", upload.array("files", 10), (req: Request, res: Re
 
   logger.info("Multiple files uploaded", { count: files.length });
 
+  const baseUrl = process.env.API_BASE_URL || "http://localhost:4000";
   res.json({
     success: true,
     files: files.map((file) => ({
@@ -47,7 +49,7 @@ uploadRouter.post("/multiple", upload.array("files", 10), (req: Request, res: Re
       originalName: file.originalname,
       mimetype: file.mimetype,
       size: file.size,
-      url: `/uploads/${file.filename}`,
+      url: `${baseUrl}/uploads/${file.filename}`,
     })),
   });
 });

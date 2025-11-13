@@ -23,6 +23,7 @@ import {
   Heading,
   HStack,
   IconButton,
+  Image,
   Input,
   InputGroup,
   InputLeftElement,
@@ -836,7 +837,7 @@ export default function WorkerDashboard() {
             <Wrap spacing={2}>
               {item.farmTypes.map((tag) => (
                 <WrapItem key={`${item.id}-farm-${tag}`}>
-                  <Tag size="sm" colorScheme="green" variant="outline">
+                  <Tag size="sm" colorScheme="agri" variant="outline">
                     {FARM_TYPE_LABEL_MAP[tag] ?? tag}
                   </Tag>
                 </WrapItem>
@@ -864,6 +865,35 @@ export default function WorkerDashboard() {
         </CardHeader>
         <CardBody pt={0}>
           <Stack spacing={3}>
+            {item.imageUrls && item.imageUrls.length > 0 && (
+              <Box borderRadius="md" overflow="hidden" borderWidth="1px">
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
+                  {item.imageUrls.slice(0, 4).map((imageUrl, index) => (
+                    <Box key={index} position="relative" h="120px" w="100%">
+                      <Image
+                        src={imageUrl}
+                        alt={`${item.title} 画像 ${index + 1}`}
+                        w="100%"
+                        h="100%"
+                        objectFit="cover"
+                        cursor="pointer"
+                        onClick={() => {
+                          const newWindow = window.open();
+                          if (newWindow) {
+                            newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%; height:auto;" />`);
+                          }
+                        }}
+                      />
+                    </Box>
+                  ))}
+                </SimpleGrid>
+                {item.imageUrls.length > 4 && (
+                  <Text fontSize="xs" color="gray.500" textAlign="center" p={2}>
+                    他 {item.imageUrls.length - 4} 件の画像
+                  </Text>
+                )}
+              </Box>
+            )}
             <HStack spacing={3} align="center">
               <Avatar size="sm" name={item.owner.name} src={item.owner.avatarUrl} />
               <Stack spacing={0}>
@@ -928,7 +958,7 @@ export default function WorkerDashboard() {
               チャット
             </Button>
             <Button
-              colorScheme={isApplied ? "green" : "blue"}
+              colorScheme={isApplied ? "agri" : "blue"}
               variant={isApplied ? "solid" : "outline"}
               w="full"
               onClick={() => handleApplyToggle(item.id)}
@@ -1267,7 +1297,7 @@ export default function WorkerDashboard() {
               <Button
                 key={item.id}
                 variant={selectedOpportunityId === item.id ? "solid" : "outline"}
-                colorScheme={applied[item.id] ? "green" : "blue"}
+                colorScheme={applied[item.id] ? "agri" : "blue"}
                 justifyContent="space-between"
                 alignItems="flex-start"
                 h="auto"
@@ -1286,7 +1316,7 @@ export default function WorkerDashboard() {
                     {OPPORTUNITY_STATUS_LABEL[item.status]}
                   </Badge>
                   {applied[item.id] ? (
-                    <Badge colorScheme="green" variant="subtle">
+                    <Badge colorScheme="agri" variant="subtle">
                       応募済み
                     </Badge>
                   ) : null}
@@ -1794,9 +1824,43 @@ export default function WorkerDashboard() {
                     {activeOpportunity.farmName}
                   </Text>
                 </HStack>
+                {activeOpportunity.imageUrls && activeOpportunity.imageUrls.length > 0 && (
+                  <Box borderRadius="md" overflow="hidden" borderWidth="1px">
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={2}>
+                      {activeOpportunity.imageUrls.map((imageUrl, index) => (
+                        <Box key={index} position="relative" h="150px" w="100%">
+                          <Image
+                            src={imageUrl}
+                            alt={`${activeOpportunity.title} 画像 ${index + 1}`}
+                            w="100%"
+                            h="100%"
+                            objectFit="cover"
+                            cursor="pointer"
+                            onClick={() => {
+                              const newWindow = window.open();
+                              if (newWindow) {
+                                newWindow.document.write(`<img src="${imageUrl}" style="max-width:100%; height:auto;" />`);
+                              }
+                            }}
+                          />
+                        </Box>
+                      ))}
+                    </SimpleGrid>
+                  </Box>
+                )}
                 <Text fontSize="sm" color="gray.700">
                   {activeOpportunity.description}
                 </Text>
+                {activeOpportunity.memo && (
+                  <Box bg="gray.50" borderRadius="md" p={3}>
+                    <Text fontSize="xs" color="gray.600" fontWeight="semibold" mb={1}>
+                      メモ
+                    </Text>
+                    <Text fontSize="sm" color="gray.700">
+                      {activeOpportunity.memo}
+                    </Text>
+                  </Box>
+                )}
                 <Stack spacing={1} fontSize="sm" color="gray.600">
                   <Text>
                     期間: {activeOpportunity.startDate} 〜 {activeOpportunity.endDate}

@@ -9,6 +9,8 @@ body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(to bottom, #f0f9f4 0%, #faf7f2 100%);
+  background-attachment: fixed;
 }
 
 * {
@@ -20,4 +22,28 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* スクロールバーのスタイリング */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f0f9f4;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #5ab384 0%, #389968 100%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #389968 0%, #2a7a52 100%);
+}
+
+/* スムーズなスクロール */
+html {
+  scroll-behavior: smooth;
 }

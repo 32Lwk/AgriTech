@@ -4,12 +4,13 @@ export interface Farmland {
   id: string;
   farmerId: string;
   name: string;
-  address: string;
-  prefecture: string;
-  city: string;
-  latitude?: number | null;
-  longitude?: number | null;
-  imageUrl?: string | null;
+  address?: string | null;
+  prefecture?: string | null;
+  city?: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  imageUrl?: string | null; // 後方互換性のため残す
+  imageUrls?: string[] | null; // 複数画像対応
   description?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -18,23 +19,17 @@ export interface Farmland {
 export interface CreateFarmlandPayload {
   farmerId: string;
   name: string;
-  address: string;
-  prefecture: string;
-  city: string;
   latitude?: number;
   longitude?: number;
-  imageUrl?: string;
+  imageUrls?: string[];
   description?: string;
 }
 
 export interface UpdateFarmlandPayload {
   name?: string;
-  address?: string;
-  prefecture?: string;
-  city?: string;
   latitude?: number;
   longitude?: number;
-  imageUrl?: string;
+  imageUrls?: string[];
   description?: string;
 }
 

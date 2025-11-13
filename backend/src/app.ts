@@ -7,6 +7,7 @@ import { uploadRouter } from "./routes/uploadRoutes";
 import { searchRouter } from "./routes/searchRoutes";
 import { mileRouter } from "./routes/mileRoutes";
 import { farmlandRouter } from "./routes/farmlandRoutes";
+import { opportunityRouter } from "./routes/opportunityRoutes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { accessLogger } from "./middleware/accessLogger";
 
@@ -34,6 +35,7 @@ export const createApp = () => {
   app.use("/api/search", searchRouter);
   app.use("/api/miles", mileRouter);
   app.use("/api/farmlands", farmlandRouter);
+  app.use("/api/opportunities", opportunityRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

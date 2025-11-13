@@ -93,6 +93,7 @@ type LeafletMapInnerProps = {
   onMapReady?: (map: Map) => void;
   invalidateSizeKey?: string | number;
   onBoundsChange?: (bounds: LatLngBounds) => void;
+  onMapClick?: (lat: number, lng: number) => void;
 };
 
 function ResizeHandler({
@@ -137,6 +138,38 @@ function BoundsHandler({
   return null;
 }
 
+function MapClickHandler({
+  onMapClick,
+}: {
+  onMapClick?: (lat: number, lng: number) => void;
+}) {
+  useMapEvents({
+    click: (e) => {
+      if (!onMapClick) return;
+      const { lat, lng } = e.latlng;
+      onMapClick(lat, lng);
+    },
+  });
+
+  return null;
+}
+
+function CenterHandler({
+  center,
+  zoom,
+}: {
+  center: [number, number];
+  zoom: number;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    map.setView(center, zoom);
+  }, [map, center[0], center[1], zoom]);
+
+  return null;
+}
+
 export default function LeafletMapInner({
   markers,
   center,
@@ -149,6 +182,7 @@ export default function LeafletMapInner({
   onMapReady,
   invalidateSizeKey,
   onBoundsChange,
+  onMapClick,
 }: LeafletMapInnerProps) {
   const resolvedHeight = typeof height === "number" ? `${height}px` : height;
 
@@ -185,6 +219,8 @@ export default function LeafletMapInner({
           markersLength={markers.length}
         />
         <BoundsHandler onBoundsChange={onBoundsChange} />
+        {onMapClick && <MapClickHandler onMapClick={onMapClick} />}
+        <CenterHandler center={center} zoom={zoom} />
         {markers.map((marker) => (
           <Marker
             key={marker.id}

@@ -11,23 +11,17 @@ import {
 const createFarmlandSchema = z.object({
   farmerId: z.string().min(1),
   name: z.string().min(1),
-  address: z.string().min(1),
-  prefecture: z.string().min(1),
-  city: z.string().min(1),
-  latitude: z.number().optional(),
-  longitude: z.number().optional(),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  latitude: z.number(),
+  longitude: z.number(),
+  imageUrls: z.array(z.string()).optional(),
   description: z.string().optional(),
 });
 
 const updateFarmlandSchema = z.object({
   name: z.string().min(1).optional(),
-  address: z.string().min(1).optional(),
-  prefecture: z.string().min(1).optional(),
-  city: z.string().min(1).optional(),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  imageUrls: z.array(z.string()).optional(),
   description: z.string().optional(),
 });
 
@@ -55,6 +49,10 @@ export const getFarmlandsHandler = async (
     const farmlands = await getFarmlandsByFarmer(farmerId);
     res.json(farmlands);
   } catch (error) {
+    console.error("Error in getFarmlandsHandler:", error);
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: "Invalid farmerId parameter", errors: error.errors });
+    }
     next(error);
   }
 };

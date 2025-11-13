@@ -22,27 +22,57 @@ export default function StatCard({
     <Box
       bg="white"
       borderRadius="xl"
-      boxShadow="sm"
-      p={{ base: 4, md: 5 }}
+      boxShadow="0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
+      p={{ base: 5, md: 6 }}
       borderWidth="1px"
-      borderColor="gray.100"
+      borderColor="white"
+      position="relative"
+      overflow="hidden"
+      transition="all 0.3s ease"
+      _hover={{
+        transform: "translateY(-4px)",
+        boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+      }}
+      _before={{
+        content: '""',
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "4px",
+        bg: "linear-gradient(90deg, agri.400 0%, agri.500 50%, agri.600 100%)",
+      }}
     >
       <Flex justify="space-between" align="flex-start" mb={4}>
-        <Text fontSize="sm" color="gray.500" fontWeight="medium">
+        <Text fontSize="sm" color="gray.600" fontWeight="600" letterSpacing="wide">
           {label}
         </Text>
-        {icon}
+        <Box
+          color="agri.500"
+          fontSize="xl"
+          opacity={0.8}
+          transform="scale(1.1)"
+        >
+          {icon}
+        </Box>
       </Flex>
       <Flex align="baseline" gap={1}>
-        <Heading size="lg">{value}</Heading>
+        <Heading
+          size="lg"
+          bgGradient="linear(to-r, agri.600, agri.500)"
+          bgClip="text"
+          fontWeight="800"
+        >
+          {value}
+        </Heading>
         {unit ? (
-          <Text fontSize="sm" color="gray.500" fontWeight="medium">
+          <Text fontSize="md" color="gray.500" fontWeight="600" ml={1}>
             {unit}
           </Text>
         ) : null}
       </Flex>
       {trend ? (
-        <Text fontSize="xs" color="blue.500" mt={2}>
+        <Text fontSize="xs" color="agri.600" mt={3} fontWeight="600">
           {trend}
         </Text>
       ) : null}

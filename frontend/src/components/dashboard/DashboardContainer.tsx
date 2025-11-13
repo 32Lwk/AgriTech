@@ -62,18 +62,26 @@ export default function DashboardContainer({ config }: DashboardContainerProps) 
             currentUser.catchphrase || "農業×学生で地域を盛り上げたい！";
           return (
             <>
-              <Stack spacing={1} align="flex-end">
+              <Stack spacing={1} align="flex-start" minW={0} flex="1">
                 {catchphrase ? (
-                  <Text fontSize="sm" color="gray.500" maxW="240px" textAlign="right">
+                  <Text
+                    fontSize="sm"
+                    color="gray.500"
+                    textAlign="left"
+                    whiteSpace="nowrap"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    maxW="100%"
+                  >
                     {catchphrase}
                   </Text>
                 ) : null}
-                <Stack spacing={0} textAlign="right">
-                  <Text fontWeight="semibold">
+                <Stack spacing={0} textAlign="left">
+                  <Text fontWeight="semibold" whiteSpace="nowrap">
                     {currentUser.name || "ワーカー"}
                   </Text>
                   {typeof currentUser.miles === "number" ? (
-                    <Text fontSize="sm" color="gray.500">
+                    <Text fontSize="sm" color="gray.500" whiteSpace="nowrap">
                       {currentUser.miles.toLocaleString()} mile
                     </Text>
                   ) : null}
@@ -93,18 +101,26 @@ export default function DashboardContainer({ config }: DashboardContainerProps) 
               currentUser.catchphrase || "地域と共に農業をアップデート";
             return (
               <>
-                <Stack spacing={1} align="flex-end">
+                <Stack spacing={1} align="flex-start" minW={0} flex="1">
                   {catchphrase ? (
-                    <Text fontSize="sm" color="gray.500" maxW="240px" textAlign="right">
+                    <Text
+                      fontSize="sm"
+                      color="gray.500"
+                      textAlign="left"
+                      whiteSpace="nowrap"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      maxW="100%"
+                    >
                       {catchphrase}
                     </Text>
                   ) : null}
-                  <Stack spacing={0} textAlign="right">
-                    <Text fontWeight="semibold">
+                  <Stack spacing={0} textAlign="left">
+                    <Text fontWeight="semibold" whiteSpace="nowrap">
                       {currentUser.name || "ファーマー"}
                     </Text>
                     {typeof currentUser.miles === "number" ? (
-                      <Text fontSize="sm" color="gray.500">
+                      <Text fontSize="sm" color="gray.500" whiteSpace="nowrap">
                         {currentUser.miles.toLocaleString()} mile
                       </Text>
                     ) : null}

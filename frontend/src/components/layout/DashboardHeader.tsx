@@ -13,6 +13,45 @@ export default function DashboardHeader({
   subtitle,
   rightSlot,
 }: DashboardHeaderProps) {
+  // タイトルから「農家」「労働者」「管理者」を抽出して緑色にする
+  const renderTitle = () => {
+    const roleKeywords = ["農家", "労働者", "管理者"];
+    const parts: (string | JSX.Element)[] = [];
+    let lastIndex = 0;
+    let currentText = title;
+
+    for (const keyword of roleKeywords) {
+      const index = currentText.indexOf(keyword);
+      if (index !== -1) {
+        // キーワードの前のテキスト
+        if (index > 0) {
+          parts.push(currentText.substring(0, index));
+        }
+        // キーワードを緑色で表示
+        parts.push(
+          <Text as="span" key={keyword} color="agri.600" fontWeight="700">
+            {keyword}
+          </Text>
+        );
+        // 残りのテキスト
+        currentText = currentText.substring(index + keyword.length);
+        lastIndex = index + keyword.length;
+      }
+    }
+
+    // 残りのテキストを追加
+    if (currentText.length > 0) {
+      parts.push(currentText);
+    }
+
+    // マッチしなかった場合は元のタイトルを返す
+    if (parts.length === 0) {
+      return title;
+    }
+
+    return <>{parts}</>;
+  };
+
   return (
     <Flex
       px={{ base: 4, md: 6 }}
@@ -22,7 +61,7 @@ export default function DashboardHeader({
       gap={4}
     >
       <Flex direction="column">
-        <Heading size="md">{title}</Heading>
+        <Heading size="md">{renderTitle()}</Heading>
         {subtitle ? (
           <Text fontSize="sm" color="gray.600" mt={1}>
             {subtitle}

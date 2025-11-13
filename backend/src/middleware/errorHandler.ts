@@ -29,9 +29,11 @@ export const errorHandler = (
   }
 
   logger.error("Unhandled error", { error });
+  const errorMessage = error instanceof Error ? error.message : "予期せぬエラーが発生しました。";
   return res.status(500).json({
     error: "InternalServerError",
-    message: "予期せぬエラーが発生しました。",
+    message: errorMessage,
+    ...(process.env.NODE_ENV === "development" && error instanceof Error && { stack: error.stack }),
   });
 };
 

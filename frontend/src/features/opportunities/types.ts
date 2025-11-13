@@ -31,6 +31,10 @@ export type Opportunity = {
   status: OpportunityStatus;
   startDate: string;
   endDate: string;
+  startTime?: string;
+  endTime?: string;
+  imageUrls?: string[];
+  memo?: string;
   location: {
     prefecture: string;
     city: string;

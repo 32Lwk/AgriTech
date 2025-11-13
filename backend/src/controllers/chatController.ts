@@ -30,9 +30,14 @@ const opportunityParamsSchema = z.object({
 });
 
 export const getThreadsHandler = async (req: Request, res: Response) => {
-  const params = chatQuerySchema.parse(req.query);
-  const threads = await listThreads(params);
-  res.json({ threads });
+  try {
+    const params = chatQuerySchema.parse(req.query);
+    const threads = await listThreads(params);
+    res.json({ threads });
+  } catch (error) {
+    console.error("Error in getThreadsHandler:", error);
+    throw error; // Let errorHandler middleware handle it
+  }
 };
 
 export const getThreadDetailHandler = async (req: Request, res: Response) => {
@@ -68,10 +73,20 @@ export const postThreadMessageHandler = async (req: Request, res: Response) => {
 };
 
 export const postThreadReadHandler = async (req: Request, res: Response) => {
-  const { threadId } = threadIdParamsSchema.parse(req.params);
-  const body = markThreadReadSchema.parse(req.body);
-  const thread = await markThreadRead(threadId, body);
-  res.json(thread);
+  try {
+    const { threadId } = threadIdParamsSchema.parse(req.params);
+    const body = markThreadReadSchema.parse(req.body);
+    console.log(`[postThreadReadHandler] threadId: ${threadId}, farmerId: ${body.farmerId}`);
+    const thread = await markThreadRead(threadId, body);
+    res.json(thread);
+  } catch (error) {
+    console.error("Error in postThreadReadHandler:", error);
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+    }
+    throw error; // Let errorHandler middleware handle it
+  }
 };
 
 export const postBroadcastHandler = async (req: Request, res: Response) => {
@@ -82,7 +97,12 @@ export const postBroadcastHandler = async (req: Request, res: Response) => {
 };
 
 export const getOpportunitiesHandler = async (req: Request, res: Response) => {
-  const farmerId = z.string().min(1).parse(req.query.farmerId);
-  const opportunities = await listOpportunitiesWithParticipants(farmerId);
-  res.json({ opportunities });
+  try {
+    const farmerId = z.string().min(1).parse(req.query.farmerId);
+    const opportunities = await listOpportunitiesWithParticipants(farmerId);
+    res.json({ opportunities });
+  } catch (error) {
+    console.error("Error in getOpportunitiesHandler:", error);
+    throw error; // Let errorHandler middleware handle it
+  }
 };

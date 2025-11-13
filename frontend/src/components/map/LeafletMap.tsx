@@ -26,6 +26,7 @@ type LeafletMapProps = {
   onMapReady?: (map: Map) => void;
   invalidateSizeKey?: string | number;
   onBoundsChange?: (bounds: LatLngBounds) => void;
+  onMapClick?: (lat: number, lng: number) => void;
 };
 
 const DynamicMap = dynamic(
@@ -90,6 +91,7 @@ export default function LeafletMap({
   onMapReady,
   invalidateSizeKey,
   onBoundsChange,
+  onMapClick,
 }: LeafletMapProps) {
   const fallbackCenter = useMemo(() => {
     if (center) return center;
@@ -112,6 +114,7 @@ export default function LeafletMap({
       onMapReady={onMapReady}
       invalidateSizeKey={invalidateSizeKey}
       onBoundsChange={onBoundsChange}
+      onMapClick={onMapClick}
     />
   );
 }

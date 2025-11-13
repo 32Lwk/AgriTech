@@ -34,7 +34,8 @@ export default function BottomNavigation({
       zIndex="modal"
       bg="white"
       borderTopWidth="1px"
-      boxShadow="md"
+      borderTopColor="agri.100"
+      boxShadow="0 -4px 6px -1px rgba(0, 0, 0, 0.1), 0 -2px 4px -1px rgba(0, 0, 0, 0.06)"
       w="100%"
       maxW="100vw"
       px={2}
@@ -58,11 +59,12 @@ export default function BottomNavigation({
             justifyContent="center"
             py={3}
             borderRadius="0"
-            colorScheme={isActive ? "blue" : undefined}
+            colorScheme={isActive ? "agri" : undefined}
             aria-current={isActive ? "page" : undefined}
             aria-label={item.label}
-            _hover={{ bg: isActive ? "blue.50" : "gray.50" }}
-            _active={{ bg: isActive ? "blue.100" : "gray.100" }}
+            _hover={{ bg: isActive ? "agri.50" : "gray.50" }}
+            _active={{ bg: isActive ? "agri.100" : "gray.100" }}
+            color={isActive ? "agri.600" : "gray.600"}
             gap={1}
             fontSize="xs"
             fontWeight={isActive ? "bold" : "medium"}

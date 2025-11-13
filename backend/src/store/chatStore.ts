@@ -110,84 +110,96 @@ const buildThreadSummary = async (
 
 export const chatStore = {
   listThreads: async (farmerId: string, includeClosed = false): Promise<ChatThreadSummary[]> => {
-    const threads = await prisma.chatThread.findMany({
-      where: {
-        farmerId,
-        opportunity: includeClosed ? undefined : { status: { not: "closed" } },
-      },
-      include: {
-        opportunity: true,
-        participants: {
-          include: {
-            applicant: true,
-          },
+    try {
+      console.log(`[listThreads] farmerId: ${farmerId}, includeClosed: ${includeClosed}`);
+      const threads = await prisma.chatThread.findMany({
+        where: {
+          farmerId,
+          opportunity: includeClosed ? undefined : { status: { not: "closed" } },
         },
-        lastMessage: true,
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
+        include: {
+          opportunity: true,
+          participants: {
+            include: {
+              applicant: true,
+            },
+          },
+          lastMessage: true,
+        },
+        orderBy: {
+          updatedAt: "desc",
+        },
+      });
 
-    const farmer = await prisma.farmer.findUnique({
-      where: { id: farmerId },
-    });
+      const farmer = await prisma.farmer.findUnique({
+        where: { id: farmerId },
+      });
 
-    const summaries = await Promise.all(
-      threads.map(async (thread) => {
-        const participants: ThreadParticipant[] = [];
+      const summaries = await Promise.all(
+        threads.map(async (thread) => {
+          const participants: ThreadParticipant[] = [];
 
-        // Add farmer
-        if (farmer) {
-          participants.push({
-            id: farmer.id,
-            role: "farmer",
-            name: farmer.name,
-            avatarUrl: farmer.avatarUrl ?? undefined,
-            tagline: farmer.tagline ?? undefined,
-          });
-        }
-
-        // Add applicants
-        for (const participant of thread.participants) {
-          if (participant.applicant) {
+          // Add farmer
+          if (farmer) {
             participants.push({
-              id: participant.applicant.id,
-              role: "applicant",
-              name: participant.applicant.name,
-              avatarUrl: participant.applicant.avatarUrl ?? undefined,
+              id: farmer.id,
+              role: "farmer",
+              name: farmer.name,
+              avatarUrl: farmer.avatarUrl ?? undefined,
+              tagline: farmer.tagline ?? undefined,
             });
           }
-        }
 
-        const unreadCount = await computeUnreadCount(thread.id, farmerId);
-
-        const lastMessage: ChatMessage | null = thread.lastMessage
-          ? {
-              id: thread.lastMessage.id,
-              threadId: thread.lastMessage.threadId,
-              authorId: thread.lastMessage.authorId,
-              authorRole: thread.lastMessage.authorRole as "farmer" | "applicant" | "system",
-              body: thread.lastMessage.body,
-              createdAt: thread.lastMessage.createdAt.toISOString(),
+          // Add applicants
+          for (const participant of thread.participants) {
+            if (participant.applicant) {
+              participants.push({
+                id: participant.applicant.id,
+                role: "applicant",
+                name: participant.applicant.name,
+                avatarUrl: participant.applicant.avatarUrl ?? undefined,
+              });
             }
-          : null;
+          }
 
-        return buildThreadSummary(
-          {
-            ...thread,
-            participantIds: participants.map((p) => p.id),
-          },
-          farmerId,
-          thread.opportunity,
-          participants,
-          lastMessage,
-          unreadCount,
-        );
-      }),
-    );
+          const unreadCount = await computeUnreadCount(thread.id, farmerId);
 
-    return summaries;
+          const lastMessage: ChatMessage | null = thread.lastMessage
+            ? {
+                id: thread.lastMessage.id,
+                threadId: thread.lastMessage.threadId,
+                authorId: thread.lastMessage.authorId,
+                authorRole: thread.lastMessage.authorRole as "farmer" | "applicant" | "system",
+                body: thread.lastMessage.body,
+                createdAt: thread.lastMessage.createdAt.toISOString(),
+              }
+            : null;
+
+          return buildThreadSummary(
+            {
+              ...thread,
+              participantIds: participants.map((p) => p.id),
+            },
+            farmerId,
+            thread.opportunity,
+            participants,
+            lastMessage,
+            unreadCount,
+          );
+        }),
+      );
+
+      console.log(`[listThreads] Found ${summaries.length} threads`);
+      return summaries;
+    } catch (error) {
+      console.error("Error in listThreads:", error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
+      // Return empty array on error instead of throwing
+      return [];
+    }
   },
 
   getThreadDetail: async (threadId: string, farmerId: string): Promise<ChatThreadDetail> => {
@@ -466,35 +478,46 @@ export const chatStore = {
   },
 
   markThreadRead: async (threadId: string, input: MarkThreadReadInput) => {
-    const thread = await prisma.chatThread.findUnique({
-      where: { id: threadId },
-    });
+    try {
+      console.log(`[markThreadRead] threadId: ${threadId}, farmerId: ${input.farmerId}`);
+      const thread = await prisma.chatThread.findUnique({
+        where: { id: threadId },
+      });
 
-    if (!thread) {
-      throw new Error(`Thread ${threadId} not found`);
-    }
+      if (!thread) {
+        throw new Error(`Thread ${threadId} not found`);
+      }
 
-    const readAt = input.readAt ? new Date(input.readAt) : new Date();
+      const readAt = input.readAt ? new Date(input.readAt) : new Date();
 
-    await prisma.threadReadState.upsert({
-      where: {
-        threadId_farmerId: {
+      await prisma.threadReadState.upsert({
+        where: {
+          threadId_farmerId: {
+            threadId,
+            farmerId: input.farmerId,
+          },
+        },
+        create: {
           threadId,
           farmerId: input.farmerId,
+          lastReadAt: readAt,
         },
-      },
-      create: {
-        threadId,
-        farmerId: input.farmerId,
-        lastReadAt: readAt,
-      },
-      update: {
-        lastReadAt: readAt,
-      },
-    });
+        update: {
+          lastReadAt: readAt,
+        },
+      });
 
-    const detail = await this.getThreadDetail(threadId, input.farmerId);
-    return detail.thread;
+      const detail = await this.getThreadDetail(threadId, input.farmerId);
+      console.log(`[markThreadRead] Successfully marked thread ${threadId} as read`);
+      return detail.thread;
+    } catch (error) {
+      console.error("Error in markThreadRead:", error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
+      throw error;
+    }
   },
 
   broadcastToOpportunity: async (opportunityId: string, input: BroadcastMessageInput) => {
@@ -578,38 +601,67 @@ export const chatStore = {
   },
 
   listOpportunitiesWithParticipants: async (farmerId: string): Promise<Opportunity[]> => {
-    const opportunities = await prisma.opportunity.findMany({
-      where: { farmerId },
-      include: {
-        participants: {
-          include: {
-            applicant: true,
+    try {
+      console.log(`[listOpportunitiesWithParticipants] farmerId: ${farmerId}`);
+      const opportunities = await prisma.opportunity.findMany({
+        where: { farmerId },
+        include: {
+          participants: {
+            include: {
+              applicant: true,
+            },
           },
+          farmland: true,
         },
-        farmland: true,
-      },
-    });
+      });
 
-    return opportunities.map((opp) => ({
-      id: opp.id,
-      title: opp.title,
-      status: opp.status as "open" | "in_progress" | "closed",
-      startDate: opp.startDate.toISOString(),
-      endDate: opp.endDate.toISOString(),
-      farmName: opp.farmName,
-      description: opp.description,
-      farmerId: opp.farmerId,
-      farmlandId: opp.farmlandId ?? undefined,
-      farmland: opp.farmland ? {
-        id: opp.farmland.id,
-        name: opp.farmland.name,
-        address: opp.farmland.address,
-        prefecture: opp.farmland.prefecture,
-        city: opp.farmland.city,
-        imageUrl: opp.farmland.imageUrl ?? undefined,
-      } : undefined,
-      managingFarmerIds: [opp.farmerId], // Simplified for now
-      participantIds: opp.participants.map((p) => p.applicantId),
-    }));
+      console.log(`[listOpportunitiesWithParticipants] Found ${opportunities.length} opportunities`);
+      return opportunities.map((opp) => ({
+        id: opp.id,
+        title: opp.title,
+        status: opp.status as "open" | "in_progress" | "closed",
+        startDate: opp.startDate.toISOString(),
+        endDate: opp.endDate.toISOString(),
+        farmName: opp.farmName,
+        description: opp.description,
+        farmerId: opp.farmerId,
+        farmlandId: opp.farmlandId ? opp.farmlandId : undefined,
+        farmland: opp.farmland ? {
+          id: opp.farmland.id,
+          name: opp.farmland.name,
+          address: opp.farmland.address,
+          prefecture: opp.farmland.prefecture,
+          city: opp.farmland.city,
+          imageUrl: opp.farmland.imageUrl ?? undefined,
+        } : undefined,
+        managingFarmerIds: [opp.farmerId], // Simplified for now
+        participantIds: (opp.participants || []).map((p) => p.applicantId),
+        participants: (opp.participants || [])
+          .filter((p) => p.applicant !== null)
+          .map((p) => {
+            const applicant = p.applicant!;
+            return {
+              id: applicant.id,
+              name: applicant.name,
+              avatarUrl: applicant.avatarUrl ?? undefined,
+              profile: {
+                age: applicant.age,
+                occupation: applicant.occupation,
+                location: applicant.location,
+              },
+              message: applicant.message ?? undefined,
+              opportunityIds: [opp.id], // 簡略化: 現在の案件のみ
+            };
+          }),
+      }));
+    } catch (error) {
+      console.error("Error in listOpportunitiesWithParticipants:", error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
+      // Return empty array on error instead of throwing
+      return [];
+    }
   },
 };

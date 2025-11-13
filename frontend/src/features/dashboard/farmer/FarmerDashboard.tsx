@@ -22,6 +22,7 @@ import {
   Heading,
   HStack,
   CloseButton,
+  IconButton,
   Image,
   Input,
   InputGroup,
@@ -65,6 +66,7 @@ import {
   FiFilter,
   FiHome,
   FiMap,
+  FiMapPin,
   FiMessageCircle,
   FiPlusCircle,
   FiSearch,
@@ -96,6 +98,9 @@ import { FarmerChatCenter } from "./components/FarmerChatCenter";
 import { mileApi, type MileBalance, type MileTransaction } from "./api/miles";
 import { FarmlandManager } from "./components/FarmlandManager";
 import { farmlandsApi, type Farmland } from "./api/farmlands";
+import { uploadApi } from "./api/upload";
+import { opportunityApi, type CreateOpportunityPayload } from "./api/opportunities";
+import { FiX, FiPlus } from "react-icons/fi";
 
 type FarmerTab = "home" | "active" | "map" | "chat" | "profile";
 
@@ -200,6 +205,29 @@ export default function FarmerDashboard() {
   const [loadingMileBalance, setLoadingMileBalance] = useState(false);
   const [farmlands, setFarmlands] = useState<Farmland[]>([]);
   const [selectedFarmlandId, setSelectedFarmlandId] = useState<string>("");
+  const [createForm, setCreateForm] = useState({
+    title: "",
+    description: "",
+    startDate: "",
+    endDate: "",
+    startTime: "",
+    endTime: "",
+    rewardMiles: "",
+    memo: "",
+  });
+  const [manualLocation, setManualLocation] = useState<{
+    lat?: number;
+    lng?: number;
+    address?: string;
+  }>({});
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [selectedFarmTypes, setSelectedFarmTypes] = useState<string[]>([]);
+  const [selectedInterestTags, setSelectedInterestTags] = useState<string[]>([]);
+  const [selectedWorkstyleTags, setSelectedWorkstyleTags] = useState<string[]>([]);
+  const [customTags, setCustomTags] = useState<string[]>([]);
+  const [customTagInput, setCustomTagInput] = useState("");
+  const [gettingLocation, setGettingLocation] = useState(false);
 
   const profileInitialValue = useMemo<ProfileEditorValue>(
     () => ({
@@ -531,11 +559,60 @@ export default function FarmerDashboard() {
     }
   }, [currentUser]);
 
+  const handleGetCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast({
+        title: "現在地の取得に対応していません",
+        description: "お使いのブラウザはGeolocation APIに対応していません。",
+        status: "error",
+      });
+      return;
+    }
+
+    setGettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setManualLocation({ lat: latitude, lng: longitude, address: "" });
+        setGettingLocation(false);
+        toast({
+          title: "現在地を取得しました",
+          status: "success",
+        });
+      },
+      (error) => {
+        setGettingLocation(false);
+        let errorMessage = "現在地の取得に失敗しました";
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMessage = "位置情報の使用が拒否されました。ブラウザの設定を確認してください。";
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMessage = "位置情報が利用できません。";
+        } else if (error.code === error.TIMEOUT) {
+          errorMessage = "位置情報の取得がタイムアウトしました。";
+        }
+        toast({
+          title: errorMessage,
+          status: "error",
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  }, [toast]);
+
   useEffect(() => {
     if (createModal.isOpen && currentUser) {
       fetchFarmlands();
+      // モーダルが開いたときに現在地を取得（初回のみ）
+      if (!selectedFarmlandId && (!manualLocation.lat || !manualLocation.lng)) {
+        handleGetCurrentLocation();
+      }
     }
-  }, [createModal.isOpen, currentUser, fetchFarmlands]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createModal.isOpen, currentUser, fetchFarmlands, handleGetCurrentLocation]);
 
   useEffect(() => {
     if (!mapDetailModal.isOpen) {
@@ -587,13 +664,236 @@ export default function FarmerDashboard() {
     });
   }, [toast]);
 
-  const handleMockCreate = () => {
-    createModal.onClose();
-    toast({
-      title: "募集を作成しました（モック）",
-      description: "実際の保存は行われませんが、UI体験として記録されました。",
-      status: "success",
+  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    const remainingSlots = 10 - uploadedImages.length;
+    if (files.length > remainingSlots) {
+      toast({
+        title: `画像は最大10件までアップロードできます。残り${remainingSlots}件です。`,
+        status: "warning",
+      });
+      return;
+    }
+
+    // プレビュー用にファイルを読み込み
+    const fileReaders: Promise<string>[] = files.map((file) => {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            resolve(e.target.result as string);
+          } else {
+            reject(new Error("ファイルの読み込みに失敗しました"));
+          }
+        };
+        reader.onerror = () => reject(new Error("ファイルの読み込みエラー"));
+        reader.readAsDataURL(file);
+      });
     });
+
+    // プレビューを表示してからアップロード
+    setUploadingImages(true);
+    Promise.all(fileReaders)
+      .then((previews) => {
+        // プレビューを即座に表示（一時的なURL）
+        const tempUrls = previews.map((preview) => preview);
+        setUploadedImages((prev) => [...prev, ...tempUrls]);
+
+        // バックエンドにアップロード
+        const uploadPromises = files.map((file) => uploadApi.uploadFile(file));
+        return Promise.all(uploadPromises);
+      })
+      .then((uploaded) => {
+        // 一時的なプレビューURLを実際のアップロードURLに置き換え
+        setUploadedImages((prev) => {
+          // 最後に追加した一時URLを実際のURLに置き換え
+          const tempCount = files.length;
+          const withoutTemp = prev.slice(0, -tempCount);
+          const serverUrls = uploaded.map((u) => {
+            // バックエンドからのURLが相対パスの場合、フルURLに変換
+            if (u.url.startsWith("/")) {
+              // 環境変数から取得、なければデフォルト値
+              const apiBase = typeof window !== "undefined" 
+                ? (process.env.NEXT_PUBLIC_UPLOAD_API_BASE || "http://localhost:4000")
+                : "http://localhost:4000";
+              // /uploads で始まる場合は既にフルURL
+              return u.url.startsWith("/uploads") ? `${apiBase.replace("/api/upload", "")}${u.url}` : `${apiBase}${u.url}`;
+            }
+            return u.url;
+          });
+          return [...withoutTemp, ...serverUrls];
+        });
+        setUploadingImages(false);
+        toast({
+          title: `${uploaded.length}件の画像をアップロードしました`,
+          status: "success",
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+        // エラー時は一時的なプレビューを削除
+        setUploadedImages((prev) => prev.slice(0, -files.length));
+        setUploadingImages(false);
+        toast({
+          title: "画像のアップロードに失敗しました",
+          status: "error",
+        });
+      })
+      .finally(() => {
+        event.target.value = "";
+      });
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setUploadedImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleMapClick = (lat: number, lng: number) => {
+    setManualLocation({ lat, lng, address: "" });
+  };
+
+  const handleAddCustomTag = () => {
+    const trimmed = customTagInput.trim();
+    if (!trimmed) return;
+    if (customTags.includes(trimmed)) {
+      toast({
+        title: "このタグは既に追加されています",
+        status: "warning",
+      });
+      return;
+    }
+    setCustomTags((prev) => [...prev, trimmed]);
+    setCustomTagInput("");
+  };
+
+  const handleRemoveCustomTag = (tag: string) => {
+    setCustomTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const handleCreateModalClose = () => {
+    createModal.onClose();
+    setCreateForm({
+      title: "",
+      description: "",
+      startDate: "",
+      endDate: "",
+      startTime: "",
+      endTime: "",
+      rewardMiles: "",
+      memo: "",
+    });
+    setSelectedFarmlandId("");
+    setManualLocation({});
+    setUploadedImages([]);
+    setSelectedFarmTypes([]);
+    setSelectedInterestTags([]);
+    setSelectedWorkstyleTags([]);
+    setCustomTags([]);
+    setCustomTagInput("");
+    setGettingLocation(false);
+  };
+
+  const handleMockCreate = async () => {
+    // バリデーション
+    if (!createForm.title.trim()) {
+      toast({
+        title: "募集タイトルを入力してください",
+        status: "error",
+      });
+      return;
+    }
+    if (!selectedFarmlandId && (!manualLocation.lat || !manualLocation.lng)) {
+      toast({
+        title: "実施農地を選択するか、マップで位置を選択してください",
+        status: "error",
+      });
+      return;
+    }
+    if (!createForm.startDate || !createForm.endDate) {
+      toast({
+        title: "実施期間を入力してください",
+        status: "error",
+      });
+      return;
+    }
+    const rewardMilesValue = Number(createForm.rewardMiles);
+    if (!createForm.rewardMiles || rewardMilesValue < 0 || rewardMilesValue % 100 !== 0) {
+      toast({
+        title: "マイル報酬は100単位で入力してください",
+        status: "error",
+      });
+      return;
+    }
+    if (uploadedImages.length > 10) {
+      toast({
+        title: "画像は最大10件までです",
+        status: "error",
+      });
+      return;
+    }
+
+    if (!currentUser) {
+      toast({
+        title: "ユーザー情報が取得できませんでした",
+        status: "error",
+      });
+      return;
+    }
+
+    try {
+      // 農地情報を取得
+      const selectedFarmland = selectedFarmlandId
+        ? farmlands.find((f) => f.id === selectedFarmlandId)
+        : null;
+
+      const payload: CreateOpportunityPayload = {
+        title: createForm.title.trim(),
+        description: createForm.description || "",
+        farmName: currentUser.name || "農場名",
+        startDate: createForm.startDate,
+        endDate: createForm.endDate,
+        startTime: createForm.startTime || undefined,
+        endTime: createForm.endTime || undefined,
+        rewardMiles: rewardMilesValue,
+        farmerId: currentUser.id,
+        farmlandId: selectedFarmlandId || undefined,
+        latitude: manualLocation.lat || selectedFarmland?.latitude || undefined,
+        longitude: manualLocation.lng || selectedFarmland?.longitude || undefined,
+        address:
+          manualLocation.address ||
+          selectedFarmland?.address ||
+          (selectedFarmland ? `${selectedFarmland.prefecture} ${selectedFarmland.city} ${selectedFarmland.address}` : undefined),
+        imageUrls: uploadedImages.length > 0 ? uploadedImages : undefined,
+        memo: createForm.memo || undefined,
+        farmTypes: selectedFarmTypes.length > 0 ? selectedFarmTypes : undefined,
+        interestTags: selectedInterestTags.length > 0 ? selectedInterestTags : undefined,
+        workstyleTags: selectedWorkstyleTags.length > 0 ? selectedWorkstyleTags : undefined,
+        tags: customTags.length > 0 ? customTags : undefined,
+        capacity: {
+          total: 10,
+          filled: 0,
+        },
+      };
+
+      await opportunityApi.createOpportunity(payload);
+
+      handleCreateModalClose();
+      toast({
+        title: "募集を作成しました",
+        status: "success",
+      });
+
+      // 募集一覧を更新（必要に応じて）
+      // fetchOpportunities();
+    } catch (error: any) {
+      console.error(error);
+      toast({
+        title: error.message || "募集の作成に失敗しました",
+        status: "error",
+      });
+    }
   };
 
   const canManageOpportunity = useCallback(
@@ -696,7 +996,7 @@ export default function FarmerDashboard() {
             <Wrap spacing={2}>
               {item.farmTypes.map((tag) => (
                 <WrapItem key={`${item.id}-farm-${tag}`}>
-                  <Tag size="sm" colorScheme="green" variant="outline">
+                  <Tag size="sm" colorScheme="agri" variant="outline">
                     {FARM_TYPE_LABEL_MAP[tag] ?? tag}
                   </Tag>
                 </WrapItem>
@@ -734,7 +1034,7 @@ export default function FarmerDashboard() {
               <Text fontSize="xs" color="gray.500">
                 応募状況: {item.capacity.filled}/{item.capacity.total} 名
               </Text>
-              <Progress value={capacityRate} size="sm" borderRadius="full" colorScheme="green" />
+              <Progress value={capacityRate} size="sm" borderRadius="full" colorScheme="agri" />
             </Stack>
             <Stack spacing={1}>
               <Text fontSize="xs" color="gray.500">
@@ -746,7 +1046,7 @@ export default function FarmerDashboard() {
                     <HStack spacing={2}>
                       <Avatar size="xs" name={manager.name} src={manager.avatarUrl} />
                       <Text fontSize="sm">{manager.name}</Text>
-                      <Badge colorScheme="green" variant="subtle">
+                      <Badge colorScheme="agri" variant="subtle">
                         {manager.role}
                       </Badge>
                     </HStack>
@@ -764,7 +1064,7 @@ export default function FarmerDashboard() {
             {canEdit ? (
               <Button
                 size="sm"
-                colorScheme="green"
+                colorScheme="agri"
                 variant="solid"
                 w="full"
                 onClick={() => handleEditOpportunityOpen(item)}
@@ -775,7 +1075,7 @@ export default function FarmerDashboard() {
             <Button
               size="sm"
               variant="outline"
-              colorScheme="green"
+              colorScheme="agri"
               w="full"
               onClick={() => handleOpportunityOpen(item)}
             >
@@ -885,7 +1185,7 @@ export default function FarmerDashboard() {
               <Button
                 justifyContent="flex-start"
                 leftIcon={<FiPlusCircle />}
-                colorScheme="green"
+                colorScheme="agri"
                 variant="solid"
                 onClick={createModal.onOpen}
               >
@@ -895,7 +1195,7 @@ export default function FarmerDashboard() {
                 justifyContent="flex-start"
                 leftIcon={<FiClipboard />}
                 variant="outline"
-                colorScheme="green"
+                colorScheme="agri"
                 onClick={() => setOpportunityStatusFilter("in_progress")}
               >
                 テンプレートから複製
@@ -904,7 +1204,7 @@ export default function FarmerDashboard() {
                 justifyContent="flex-start"
                 leftIcon={<FiTrendingUp />}
                 variant="ghost"
-                colorScheme="green"
+                colorScheme="agri"
                 onClick={milesModal.onOpen}
               >
                 マイル運用を確認
@@ -999,7 +1299,7 @@ export default function FarmerDashboard() {
                         <Button
                           size="xs"
                           variant={isActive ? "solid" : "outline"}
-                          colorScheme="green"
+                          colorScheme="agri"
                           onClick={() => toggleOpportunityFarmType(option.value)}
                         >
                           {option.label}
@@ -1061,7 +1361,7 @@ export default function FarmerDashboard() {
             <Button
               leftIcon={<FiPlusCircle />}
               size="sm"
-              colorScheme="green"
+              colorScheme="agri"
               onClick={createModal.onOpen}
             >
               募集を作成
@@ -1139,7 +1439,7 @@ export default function FarmerDashboard() {
           <CardHeader>
             <HStack justify="space-between" align="center">
               <Heading size="sm">フィルター</Heading>
-              <Badge colorScheme="green" variant="subtle">
+              <Badge colorScheme="agri" variant="subtle">
                 審査中 {pendingCount} 名
               </Badge>
             </HStack>
@@ -1173,7 +1473,7 @@ export default function FarmerDashboard() {
                   <FormLabel fontSize="sm">審査待ち</FormLabel>
                   <Button
                     variant="outline"
-                    colorScheme="green"
+                    colorScheme="agri"
                     w="full"
                     onClick={() => setApplicantFilter("pending")}
                   >
@@ -1196,7 +1496,7 @@ export default function FarmerDashboard() {
               <Button
                 justifyContent="flex-start"
                 leftIcon={<FiMessageCircle />}
-                colorScheme="green"
+                colorScheme="agri"
                 variant="solid"
                 onClick={handleApplicantBulkMessage}
               >
@@ -1206,7 +1506,7 @@ export default function FarmerDashboard() {
                 justifyContent="flex-start"
                 leftIcon={<FiClipboard />}
                 variant="outline"
-                colorScheme="green"
+                colorScheme="agri"
                 onClick={handleApplicantExport}
               >
                 応募者リストをCSV出力
@@ -1215,7 +1515,7 @@ export default function FarmerDashboard() {
                 justifyContent="flex-start"
                 leftIcon={<FiMessageCircle />}
                 variant="ghost"
-                colorScheme="green"
+                colorScheme="agri"
                 onClick={() => setActiveTab("chat")}
               >
                 チャット画面を開く
@@ -1289,7 +1589,7 @@ export default function FarmerDashboard() {
                           </Button>
                           <Button
                             size="sm"
-                            colorScheme="green"
+                            colorScheme="agri"
                             variant="outline"
                             onClick={() => handleApplicantAction(applicant.id, "approved")}
                           >
@@ -1406,7 +1706,7 @@ export default function FarmerDashboard() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          colorScheme="green"
+                          colorScheme="agri"
                           onClick={() => handleOpportunityOpen(item)}
                         >
                           詳細
@@ -1415,7 +1715,7 @@ export default function FarmerDashboard() {
                           size="sm"
                           variant="ghost"
                           leftIcon={<FiMessageCircle />}
-                          colorScheme="green"
+                          colorScheme="agri"
                           onClick={() => handleChatOpen(item.id)}
                         >
                           チャット
@@ -1512,7 +1812,7 @@ export default function FarmerDashboard() {
             </HStack>
             <HStack spacing={3}>
               <Button
-                colorScheme="green"
+                colorScheme="agri"
                 leftIcon={<FiUser />}
                 onClick={profileModal.onOpen}
               >
@@ -1520,7 +1820,7 @@ export default function FarmerDashboard() {
               </Button>
               <Button
                 variant="outline"
-                colorScheme="green"
+                colorScheme="agri"
                 leftIcon={<FiTrendingUp />}
                 onClick={milesModal.onOpen}
               >
@@ -1857,7 +2157,7 @@ export default function FarmerDashboard() {
               閉じる
             </Button>
             <Button
-              colorScheme="green"
+              colorScheme="agri"
               onClick={() => {
                 setActiveTab("active");
                 mapDetailModal.onClose();
@@ -1937,7 +2237,7 @@ export default function FarmerDashboard() {
               キャンセル
             </Button>
             <Button
-              colorScheme="green"
+              colorScheme="agri"
               onClick={handleEditOpportunitySubmit}
               isDisabled={!editingOpportunity}
             >
@@ -1947,23 +2247,41 @@ export default function FarmerDashboard() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={createModal.isOpen} onClose={createModal.onClose} size="lg">
+      <Modal isOpen={createModal.isOpen} onClose={handleCreateModalClose} size="xl" scrollBehavior="inside">
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>募集を作成（モック）</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <Stack spacing={4}>
-              <FormControl>
+              <FormControl isRequired>
                 <FormLabel>募集タイトル</FormLabel>
-                <Input placeholder="例：秋の果物収穫サポート" />
+                <Input
+                  placeholder="例：秋の果物収穫サポート"
+                  value={createForm.title}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, title: e.target.value }))}
+                />
               </FormControl>
               <FormControl>
+                <FormLabel>説明</FormLabel>
+                <Textarea
+                  placeholder="募集の詳細を入力"
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, description: e.target.value }))}
+                  minH="100px"
+                />
+              </FormControl>
+              <FormControl isRequired>
                 <FormLabel>実施農地</FormLabel>
                 <Select
                   placeholder="農地を選択（プロフィールで登録済みの農地）"
                   value={selectedFarmlandId}
-                  onChange={(e) => setSelectedFarmlandId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedFarmlandId(e.target.value);
+                    if (e.target.value) {
+                      setManualLocation({});
+                    }
+                  }}
                 >
                   {farmlands.map((farmland) => (
                     <option key={farmland.id} value={farmland.id}>
@@ -1989,25 +2307,301 @@ export default function FarmerDashboard() {
                 </FormControl>
               )}
               {!selectedFarmlandId && (
-                <FormControl>
-                  <FormLabel>実施地域（手動入力）</FormLabel>
-                  <Input placeholder="例：愛知県 豊橋市石巻町" />
+                <FormControl isRequired>
+                  <FormLabel>実施農地（手動入力）</FormLabel>
+                  <FormHelperText fontSize="xs" mb={2}>
+                    マップをクリックして位置を選択するか、現在地ボタンを使用してください。
+                  </FormHelperText>
+                  <HStack spacing={2} mb={2}>
+                    <Button
+                      size="sm"
+                      leftIcon={<FiMapPin />}
+                      onClick={handleGetCurrentLocation}
+                      isLoading={gettingLocation}
+                      loadingText="取得中..."
+                      variant="outline"
+                      colorScheme="agri"
+                    >
+                      現在地を使用
+                    </Button>
+                  </HStack>
+                  <Box borderRadius="md" overflow="hidden" borderWidth="1px" mb={2}>
+                    <LeafletMap
+                      markers={
+                        manualLocation.lat && manualLocation.lng
+                          ? [
+                              {
+                                id: "manual-location",
+                                position: [manualLocation.lat, manualLocation.lng],
+                                title: "選択された位置",
+                                variant: "default",
+                              },
+                            ]
+                          : []
+                      }
+                      center={manualLocation.lat && manualLocation.lng ? [manualLocation.lat, manualLocation.lng] : [35.6812, 139.7671]}
+                      zoom={manualLocation.lat && manualLocation.lng ? 15 : 13}
+                      height={300}
+                      onMapClick={handleMapClick}
+                      showPopups={true}
+                    />
+                  </Box>
+                  {manualLocation.lat && manualLocation.lng && (
+                    <Text fontSize="xs" color="green.600">
+                      緯度: {manualLocation.lat.toFixed(6)}, 経度: {manualLocation.lng.toFixed(6)}
+                    </Text>
+                  )}
                 </FormControl>
               )}
               <FormControl>
+                <FormLabel>画像</FormLabel>
+                <FormHelperText fontSize="xs" mb={2}>
+                  最大10件までアップロードできます。現在 {uploadedImages.length}/10 件
+                </FormHelperText>
+                <Input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageSelect}
+                  disabled={uploadingImages || uploadedImages.length >= 10}
+                />
+                {uploadingImages && (
+                  <Text fontSize="xs" color="blue.500" mt={1}>
+                    アップロード中... 画像は選択と同時に確認できます。
+                  </Text>
+                )}
+                {uploadedImages.length > 0 && (
+                  <Box mt={3}>
+                    <Text fontSize="xs" color="gray.600" mb={2}>
+                      アップロード済み画像（クリックで拡大表示）
+                    </Text>
+                    <SimpleGrid columns={{ base: 2, md: 3 }} spacing={2}>
+                      {uploadedImages.map((url, index) => (
+                        <Box
+                          key={index}
+                          position="relative"
+                          borderRadius="md"
+                          overflow="hidden"
+                          borderWidth="1px"
+                          cursor="pointer"
+                          _hover={{ borderColor: "green.400", borderWidth: "2px" }}
+                          onClick={() => {
+                            // モーダルで拡大表示
+                            const newWindow = window.open();
+                            if (newWindow) {
+                              newWindow.document.write(`<img src="${url}" style="max-width:100%; height:auto;" />`);
+                            }
+                          }}
+                        >
+                          <Image
+                            src={url}
+                            alt={`アップロード画像 ${index + 1}`}
+                            w="100%"
+                            h="120px"
+                            objectFit="cover"
+                          />
+                          <IconButton
+                            aria-label="画像を削除"
+                            icon={<FiX />}
+                            size="xs"
+                            colorScheme="red"
+                            position="absolute"
+                            top={1}
+                            right={1}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveImage(index);
+                            }}
+                          />
+                        </Box>
+                      ))}
+                    </SimpleGrid>
+                  </Box>
+                )}
+              </FormControl>
+              <FormControl isRequired>
                 <FormLabel>実施期間</FormLabel>
                 <HStack>
-                  <Input type="date" />
-                  <Input type="date" />
+                  <Input
+                    type="date"
+                    value={createForm.startDate}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, startDate: e.target.value }))}
+                  />
+                  <Input
+                    type="date"
+                    value={createForm.endDate}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, endDate: e.target.value }))}
+                  />
                 </HStack>
               </FormControl>
               <FormControl>
+                <FormLabel>実施時間（全期間で同一）</FormLabel>
+                <HStack>
+                  <Input
+                    type="time"
+                    value={createForm.startTime}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, startTime: e.target.value }))}
+                  />
+                  <Text>〜</Text>
+                  <Input
+                    type="time"
+                    value={createForm.endTime}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, endTime: e.target.value }))}
+                  />
+                </HStack>
+                <FormHelperText fontSize="xs">全期間で同じ時間帯を適用します</FormHelperText>
+              </FormControl>
+              <FormControl isRequired>
                 <FormLabel>マイル報酬</FormLabel>
-                <Select placeholder="報酬を選択">
-                  <option value="800">800 mile</option>
-                  <option value="1200">1200 mile</option>
-                  <option value="1500">1500 mile</option>
-                </Select>
+                <Input
+                  type="number"
+                  step="100"
+                  min="0"
+                  placeholder="例：1500"
+                  value={createForm.rewardMiles}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, rewardMiles: e.target.value }))}
+                />
+                <FormHelperText fontSize="xs">100単位で入力してください</FormHelperText>
+              </FormControl>
+              <FormControl>
+                <FormLabel>メモ</FormLabel>
+                <Textarea
+                  placeholder="募集全体に対するメモを入力"
+                  value={createForm.memo}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, memo: e.target.value }))}
+                  minH="80px"
+                />
+                <FormHelperText fontSize="xs">1つの案件の募集全体に対するメモです</FormHelperText>
+              </FormControl>
+              <FormControl>
+                <FormLabel>タグ</FormLabel>
+                <Stack spacing={4}>
+                  <Box>
+                    <FormLabel fontSize="sm">農場タイプ</FormLabel>
+                    <Wrap spacing={2} mt={2}>
+                      {FARMER_FARM_TYPE_OPTIONS.map((option) => {
+                        const isActive = selectedFarmTypes.includes(option.value);
+                        return (
+                          <WrapItem key={option.value}>
+                            <Button
+                              size="xs"
+                              variant={isActive ? "solid" : "outline"}
+                              colorScheme="agri"
+                              onClick={() => {
+                                setSelectedFarmTypes((prev) =>
+                                  prev.includes(option.value)
+                                    ? prev.filter((v) => v !== option.value)
+                                    : [...prev, option.value]
+                                );
+                              }}
+                            >
+                              {option.label}
+                            </Button>
+                          </WrapItem>
+                        );
+                      })}
+                    </Wrap>
+                  </Box>
+                  <Box>
+                    <FormLabel fontSize="sm">興味タグ</FormLabel>
+                    <Wrap spacing={2} mt={2}>
+                      {INTEREST_FARMING_OPTIONS.map((option) => {
+                        const isActive = selectedInterestTags.includes(option.value);
+                        return (
+                          <WrapItem key={option.value}>
+                            <Button
+                              size="xs"
+                              variant={isActive ? "solid" : "outline"}
+                              colorScheme="teal"
+                              onClick={() => {
+                                setSelectedInterestTags((prev) =>
+                                  prev.includes(option.value)
+                                    ? prev.filter((v) => v !== option.value)
+                                    : [...prev, option.value]
+                                );
+                              }}
+                            >
+                              {option.label}
+                            </Button>
+                          </WrapItem>
+                        );
+                      })}
+                    </Wrap>
+                  </Box>
+                  <Box>
+                    <FormLabel fontSize="sm">働き方タグ</FormLabel>
+                    <Wrap spacing={2} mt={2}>
+                      {INTEREST_WORKSTYLE_OPTIONS.map((option) => {
+                        const isActive = selectedWorkstyleTags.includes(option.value);
+                        return (
+                          <WrapItem key={option.value}>
+                            <Button
+                              size="xs"
+                              variant={isActive ? "solid" : "outline"}
+                              colorScheme="purple"
+                              onClick={() => {
+                                setSelectedWorkstyleTags((prev) =>
+                                  prev.includes(option.value)
+                                    ? prev.filter((v) => v !== option.value)
+                                    : [...prev, option.value]
+                                );
+                              }}
+                            >
+                              {option.label}
+                            </Button>
+                          </WrapItem>
+                        );
+                      })}
+                    </Wrap>
+                  </Box>
+                  <Box>
+                    <FormLabel fontSize="sm">カスタムタグ</FormLabel>
+                    <HStack mt={2}>
+                      <Input
+                        placeholder="カスタムタグを入力"
+                        value={customTagInput}
+                        onChange={(e) => setCustomTagInput(e.target.value)}
+                        onKeyPress={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddCustomTag();
+                          }
+                        }}
+                      />
+                      <Button size="sm" leftIcon={<FiPlus />} onClick={handleAddCustomTag}>
+                        追加
+                      </Button>
+                    </HStack>
+                    {customTags.length > 0 && (
+                      <Wrap spacing={2} mt={2}>
+                        {customTags.map((tag) => (
+                          <WrapItem key={tag}>
+                            <HStack spacing={1}>
+                              <Tag
+                                size="sm"
+                                colorScheme="gray"
+                                variant="solid"
+                                borderRadius="full"
+                                px={3}
+                                py={1}
+                              >
+                                {tag}
+                              </Tag>
+                              <IconButton
+                                aria-label="タグを削除"
+                                icon={<FiX />}
+                                size="xs"
+                                variant="ghost"
+                                colorScheme="gray"
+                                onClick={() => handleRemoveCustomTag(tag)}
+                              />
+                            </HStack>
+                          </WrapItem>
+                        ))}
+                      </Wrap>
+                    )}
+                  </Box>
+                </Stack>
               </FormControl>
               <Text fontSize="xs" color="gray.500">
                 入力内容はローカルに保存されません。作成後に確認トーストのみ表示されます。
@@ -2015,7 +2609,7 @@ export default function FarmerDashboard() {
             </Stack>
           </ModalBody>
           <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={createModal.onClose}>
+            <Button variant="ghost" mr={3} onClick={handleCreateModalClose}>
               キャンセル
             </Button>
             <Button colorScheme="green" onClick={handleMockCreate}>
