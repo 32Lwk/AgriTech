@@ -47,6 +47,7 @@ import {
   WrapItem,
 } from "@chakra-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSocket } from "@/hooks/useSocket";
 import {
   FiCheckCircle,
   FiFilter,
@@ -59,6 +60,7 @@ import {
 } from "react-icons/fi";
 
 import { chatApi } from "../api/chat";
+import { uploadApi } from "../api/upload";
 import type {
   BroadcastMessagePayload,
   ChatMessage,
@@ -170,6 +172,7 @@ export const FarmerChatCenter = ({
   const dmModal = useDisclosure();
   const groupModal = useDisclosure();
   const broadcastModal = useDisclosure();
+  const socket = useSocket();
 
   const [threads, setThreads] = useState<ComposedThread[]>([]);
   const [threadCategory, setThreadCategory] = useState<ThreadCategory>("all");
@@ -187,6 +190,8 @@ export const FarmerChatCenter = ({
   const [sendingMessage, setSendingMessage] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [chatSearchKeyword, setChatSearchKeyword] = useState("");
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{ url: string; originalName: string }>>([]);
 
   const threadsRef = useLatestRef(threads);
 
@@ -385,6 +390,84 @@ export const FarmerChatCenter = ({
     }
   }, [activeThreadId, fetchThreadDetail]);
 
+  // Socket.io real-time updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleNewMessage = (message: ChatMessage) => {
+      setThreads((prev) => {
+        const thread = prev.find((t) => t.id === message.threadId);
+        if (!thread) {
+          // Thread not in list, refresh threads
+          fetchThreads();
+          return prev;
+        }
+        return prev.map((t) =>
+          t.id === message.threadId
+            ? {
+                ...t,
+                lastMessage: message,
+                updatedAt: message.createdAt,
+                unreadCount: t.id === activeThreadId ? 0 : t.unreadCount + 1,
+              }
+            : t,
+        );
+      });
+
+      // Update thread detail if active
+      if (message.threadId === activeThreadId && threadDetail) {
+        setThreadDetail((prev) => {
+          if (!prev || prev.thread.id !== message.threadId) return prev;
+          return {
+            ...prev,
+            messages: [...prev.messages, message],
+            thread: {
+              ...prev.thread,
+              lastMessage: message,
+              updatedAt: message.createdAt,
+            },
+          };
+        });
+      }
+    };
+
+    const handleThreadUpdate = (updatedThread: ChatThreadSummary) => {
+      setThreads((prev) => {
+        const existing = prev.find((t) => t.id === updatedThread.id);
+        if (!existing) {
+          // New thread, refresh list
+          fetchThreads();
+          return prev;
+        }
+        return prev.map((t) =>
+          t.id === updatedThread.id ? enhanceThreadSummary(updatedThread) : t,
+        );
+      });
+
+      // Update thread detail if active
+      if (updatedThread.id === activeThreadId) {
+        fetchThreadDetail(updatedThread.id);
+      }
+    };
+
+    socket.on("message:new", handleNewMessage);
+    socket.on("thread:update", handleThreadUpdate);
+
+    // Join all thread rooms
+    threads.forEach((thread) => {
+      socket.emit("join:thread", thread.id);
+    });
+
+    return () => {
+      socket.off("message:new", handleNewMessage);
+      socket.off("thread:update", handleThreadUpdate);
+      // Leave all thread rooms
+      threads.forEach((thread) => {
+        socket.emit("leave:thread", thread.id);
+      });
+    };
+  }, [socket, threads, activeThreadId, threadDetail, fetchThreads, fetchThreadDetail]);
+
   useEffect(() => {
     if (focusSignal?.id) {
       setSelectedOpportunityFilter(focusSignal.id);
@@ -428,6 +511,7 @@ export const FarmerChatCenter = ({
         ),
       );
       setDraftMessage("");
+      setUploadedFiles([]);
       toast({ title: "メッセージを送信しました", status: "success", duration: 1500 });
     } catch (error) {
       console.error(error);
@@ -877,6 +961,22 @@ export const FarmerChatCenter = ({
                 <Divider />
                 <Box as="form" onSubmit={handleMessageSubmit}>
                   <Stack spacing={2}>
+                    {uploadedFiles.length > 0 && (
+                      <Box>
+                        <Text fontSize="xs" color="gray.500" mb={2}>
+                          アップロード済みファイル:
+                        </Text>
+                        <Wrap spacing={2}>
+                          {uploadedFiles.map((file, index) => (
+                            <WrapItem key={index}>
+                              <Badge colorScheme="blue">
+                                {file.originalName}
+                              </Badge>
+                            </WrapItem>
+                          ))}
+                        </Wrap>
+                      </Box>
+                    )}
                     <Textarea
                       placeholder="メッセージを入力してください"
                       value={draftMessage}
@@ -885,15 +985,53 @@ export const FarmerChatCenter = ({
                       minH="120px"
                     />
                     <HStack justify="space-between" align="center">
-                      <Text fontSize="xs" color="gray.500">
-                        Enterで改行・Ctrl+Enterで送信
-                      </Text>
+                      <HStack spacing={2}>
+                        <Input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          display="none"
+                          id="file-upload"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setUploadingFile(true);
+                            try {
+                              const uploaded = await uploadApi.uploadFile(file);
+                              setUploadedFiles((prev) => [...prev, { url: uploaded.url, originalName: uploaded.originalName }]);
+                              setDraftMessage((prev) => 
+                                prev ? `${prev}\n[ファイル: ${uploaded.originalName}](${uploaded.url})` : `[ファイル: ${uploaded.originalName}](${uploaded.url})`
+                              );
+                              toast({ title: "ファイルをアップロードしました", status: "success" });
+                            } catch (error) {
+                              console.error(error);
+                              toast({ title: "ファイルのアップロードに失敗しました", status: "error" });
+                            } finally {
+                              setUploadingFile(false);
+                              // Reset input
+                              e.target.value = "";
+                            }
+                          }}
+                        />
+                        <Button
+                          as="label"
+                          htmlFor="file-upload"
+                          size="sm"
+                          variant="outline"
+                          isLoading={uploadingFile}
+                          cursor="pointer"
+                        >
+                          ファイル添付
+                        </Button>
+                        <Text fontSize="xs" color="gray.500">
+                          Enterで改行・Ctrl+Enterで送信
+                        </Text>
+                      </HStack>
                       <Button
                         type="submit"
                         colorScheme="green"
                         rightIcon={<FiSend />}
                         isLoading={sendingMessage}
-                        isDisabled={!draftMessage.trim()}
+                        isDisabled={!draftMessage.trim() && uploadedFiles.length === 0}
                       >
                         送信
                       </Button>

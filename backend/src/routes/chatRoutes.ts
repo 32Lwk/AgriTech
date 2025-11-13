@@ -10,11 +10,13 @@ import {
   postThreadMessageHandler,
   postThreadReadHandler,
 } from "../controllers/chatController";
+import { cacheMiddleware } from "../middleware/cache";
 
 export const chatRouter = Router();
 
-chatRouter.get("/threads", getThreadsHandler);
-chatRouter.get("/threads/:threadId", getThreadDetailHandler);
+// Apply caching to GET endpoints
+chatRouter.get("/threads", cacheMiddleware(60), getThreadsHandler);
+chatRouter.get("/threads/:threadId", cacheMiddleware(60), getThreadDetailHandler);
 chatRouter.post("/threads/dm", postDmThreadHandler);
 chatRouter.post("/threads/group", postGroupThreadHandler);
 chatRouter.post("/threads/:threadId/messages", postThreadMessageHandler);

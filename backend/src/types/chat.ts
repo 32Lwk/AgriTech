@@ -28,6 +28,15 @@ export interface Applicant {
   avatarUrl?: string;
 }
 
+export interface FarmlandInfo {
+  id: string;
+  name: string;
+  address: string;
+  prefecture: string;
+  city: string;
+  imageUrl?: string;
+}
+
 export interface Opportunity {
   id: string;
   title: string;
@@ -37,6 +46,8 @@ export interface Opportunity {
   farmName: string;
   description: string;
   farmerId: string;
+  farmlandId?: string;
+  farmland?: FarmlandInfo;
   managingFarmerIds: string[];
   participantIds: string[];
 }

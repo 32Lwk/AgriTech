@@ -1,0 +1,204 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Farmer {
+  id        String   @id @default(uuid())
+  name      String
+  avatarUrl String?
+  tagline   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  opportunities Opportunity[]
+  threads       ChatThread[] @relation("ThreadFarmer")
+  readStates    ThreadReadState[]
+  mileTransactions MileTransaction[]
+  farmlands    Farmland[]
+
+  @@map("farmers")
+}
+
+model Applicant {
+  id        String   @id @default(uuid())
+  name      String
+  avatarUrl String?
+  age       Int
+  occupation String
+  location  String
+  message   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  opportunityParticipants OpportunityParticipant[]
+  threadParticipants      ChatThreadParticipant[]
+
+  @@map("applicants")
+}
+
+model Opportunity {
+  id                String   @id @default(uuid())
+  title             String
+  status            String   // "open" | "in_progress" | "closed"
+  startDate         DateTime
+  endDate           DateTime
+  farmName          String
+  description       String
+  farmerId          String
+  farmlandId       String?  // 実施農地のID
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  farmer            Farmer   @relation(fields: [farmerId], references: [id])
+  farmland          Farmland? @relation(fields: [farmlandId], references: [id], onDelete: SetNull)
+  managingFarmers   OpportunityManager[]
+  participants      OpportunityParticipant[]
+  threads           ChatThread[]
+  mileTransactions  MileTransaction[]
+
+  @@map("opportunities")
+}
+
+model OpportunityManager {
+  id            String   @id @default(uuid())
+  opportunityId String
+  farmerId      String
+  createdAt     DateTime @default(now())
+
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, farmerId])
+  @@map("opportunity_managers")
+}
+
+model OpportunityParticipant {
+  id            String   @id @default(uuid())
+  opportunityId String
+  applicantId   String
+  createdAt     DateTime @default(now())
+
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  applicant     Applicant   @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, applicantId])
+  @@map("opportunity_participants")
+}
+
+model ChatThread {
+  id            String   @id @default(uuid())
+  farmerId      String
+  opportunityId String
+  type          String   // "dm" | "group" | "broadcast"
+  title         String
+  lastMessageId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  farmer        Farmer   @relation("ThreadFarmer", fields: [farmerId], references: [id])
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  participants  ChatThreadParticipant[]
+  messages      ChatMessage[]
+  readStates    ThreadReadState[]
+  lastMessage   ChatMessage? @relation("ThreadLastMessage", fields: [lastMessageId], references: [id])
+
+  @@map("chat_threads")
+}
+
+model ChatThreadParticipant {
+  id        String   @id @default(uuid())
+  threadId  String
+  applicantId String?
+  createdAt DateTime @default(now())
+
+  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  applicant Applicant? @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, applicantId])
+  @@map("chat_thread_participants")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  threadId  String
+  authorId  String
+  authorRole String  // "farmer" | "applicant" | "system"
+  body      String
+  createdAt DateTime @default(now())
+
+  // Relations
+  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadAsLastMessage ChatThread[] @relation("ThreadLastMessage")
+
+  @@index([threadId, createdAt])
+  @@map("chat_messages")
+}
+
+// FTS5 virtual table for full-text search
+// Note: FTS5 tables are created via raw SQL migration
+
+model ThreadReadState {
+  id        String   @id @default(uuid())
+  threadId  String
+  farmerId  String
+  lastReadAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  thread    ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  farmer    Farmer     @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, farmerId])
+  @@map("thread_read_states")
+}
+
+model MileTransaction {
+  id          String   @id @default(uuid())
+  farmerId    String
+  type        String   // "earn" | "spend" | "exchange"
+  amount      Int      // Positive for earn, negative for spend
+  description String
+  opportunityId String?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  farmer      Farmer   @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  @@index([farmerId, createdAt])
+  @@map("mile_transactions")
+}
+
+model Farmland {
+  id          String   @id @default(uuid())
+  farmerId    String
+  name        String   // 農地の名称（例：「本圃場」「第2圃場」）
+  address     String   // 住所
+  prefecture  String   // 都道府県
+  city        String   // 市区町村
+  latitude    Float?   // 緯度
+  longitude   Float?   // 経度
+  imageUrl    String?  // 農地の画像URL
+  description String?  // 農地の説明
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  farmer      Farmer   @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+  opportunities Opportunity[]
+
+  @@index([farmerId])
+  @@map("farmlands")
+}

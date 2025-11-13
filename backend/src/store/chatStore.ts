@@ -1,15 +1,5 @@
-import { v4 as uuid } from "uuid";
-
-import {
-  applicants,
-  farmers,
-  messages,
-  opportunities,
-  threadReadStates,
-  threads,
-} from "./mockData";
+import { prisma } from "../db/client";
 import type {
-  Applicant,
   BroadcastMessageInput,
   ChatMessage,
   ChatThread,
@@ -24,312 +14,602 @@ import type {
   ThreadType,
 } from "../types/chat";
 
-const farmerMap = new Map(farmers.map((farmer) => [farmer.id, farmer]));
-const applicantMap = new Map(applicants.map((applicant) => [applicant.id, applicant]));
-const opportunityMap = new Map(opportunities.map((opportunity) => [opportunity.id, opportunity]));
-
-const getOpportunity = (opportunityId: string): Opportunity => {
-  const opportunity = opportunityMap.get(opportunityId);
-  if (!opportunity) {
-    throw new Error(`Opportunity ${opportunityId} not found`);
-  }
-  return opportunity;
-};
-
-const getApplicant = (applicantId: string): Applicant => {
-  const applicant = applicantMap.get(applicantId);
-  if (!applicant) throw new Error(`Applicant ${applicantId} not found`);
-  return applicant;
-};
-
-const getThread = (threadId: string): ChatThread => {
-  const thread = threads.find((item) => item.id === threadId);
-  if (!thread) {
-    throw new Error(`Thread ${threadId} not found`);
-  }
-  return thread;
-};
-
-const getThreadMessages = (threadId: string): ChatMessage[] =>
-  messages.filter((message) => message.threadId === threadId).sort((a, b) => {
-    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-  });
-
-const buildParticipant = (participantId: string): ThreadParticipant | undefined => {
-  if (farmerMap.has(participantId)) {
-    const farmer = farmerMap.get(participantId)!;
-    const participant: ThreadParticipant = {
+const buildParticipant = (
+  farmerId: string,
+  applicantId: string | null,
+  farmer: { id: string; name: string; avatarUrl: string | null; tagline: string | null } | null,
+  applicant: { id: string; name: string; avatarUrl: string | null } | null,
+): ThreadParticipant | null => {
+  if (farmerId === farmer?.id) {
+    return {
       id: farmer.id,
       role: "farmer",
       name: farmer.name,
+      avatarUrl: farmer.avatarUrl ?? undefined,
+      tagline: farmer.tagline ?? undefined,
     };
-    if (farmer.avatarUrl) {
-      participant.avatarUrl = farmer.avatarUrl;
-    }
-    if (farmer.tagline) {
-      participant.tagline = farmer.tagline;
-    }
-    return participant;
   }
-  if (applicantMap.has(participantId)) {
-    const applicant = applicantMap.get(participantId)!;
-    const participant: ThreadParticipant = {
+  if (applicantId && applicant) {
+    return {
       id: applicant.id,
       role: "applicant",
       name: applicant.name,
+      avatarUrl: applicant.avatarUrl ?? undefined,
     };
-    if (applicant.avatarUrl) {
-      participant.avatarUrl = applicant.avatarUrl;
-    }
-    return participant;
   }
-  return undefined;
+  return null;
 };
 
-const ensureReadState = (threadId: string, farmerId: string) => {
-  const existing = threadReadStates.find(
-    (state) => state.threadId === threadId && state.farmerId === farmerId,
-  );
-  if (existing) return existing;
-  const newState = {
-    threadId,
-    farmerId,
-    lastReadAt: new Date(0).toISOString(),
-  };
-  threadReadStates.push(newState);
-  return newState;
+const computeUnreadCount = async (threadId: string, farmerId: string): Promise<number> => {
+  const readState = await prisma.threadReadState.findUnique({
+    where: {
+      threadId_farmerId: {
+        threadId,
+        farmerId,
+      },
+    },
+  });
+
+  const lastRead = readState ? new Date(readState.lastReadAt).getTime() : 0;
+
+  const unreadMessages = await prisma.chatMessage.count({
+    where: {
+      threadId,
+      authorRole: {
+        not: "farmer",
+      },
+      createdAt: {
+        gt: readState ? readState.lastReadAt : new Date(0),
+      },
+    },
+  });
+
+  return unreadMessages;
 };
 
-const computeUnreadCount = (thread: ChatThread, farmerId: string) => {
-  const readState = ensureReadState(thread.id, farmerId);
-  const lastRead = new Date(readState.lastReadAt).getTime();
-  return getThreadMessages(thread.id).filter((message) => {
-    const createdAt = new Date(message.createdAt).getTime();
-    return message.authorRole !== "farmer" && createdAt > lastRead;
-  }).length;
-};
-
-const buildThreadSummary = (thread: ChatThread, farmerId: string): ChatThreadSummary => {
-  const opportunity = getOpportunity(thread.opportunityId);
-  const participants = thread.participantIds
-    .map(buildParticipant)
-    .filter((participant): participant is ThreadParticipant => Boolean(participant));
-  const lastMessage = thread.lastMessageId
-    ? messages.find((message) => message.id === thread.lastMessageId)
-    : undefined;
-
+const buildThreadSummary = async (
+  thread: {
+    id: string;
+    farmerId: string;
+    opportunityId: string;
+    type: string;
+    title: string;
+    participantIds?: string[];
+    createdAt: Date;
+    updatedAt: Date;
+    lastMessageId: string | null;
+  },
+  farmerId: string,
+  opportunity: { id: string; title: string; status: string },
+  participants: ThreadParticipant[],
+  lastMessage: ChatMessage | null,
+  unreadCount: number,
+): Promise<ChatThreadSummary> => {
   const summary: ChatThreadSummary = {
-    ...thread,
+    id: thread.id,
+    farmerId: thread.farmerId,
+    opportunityId: thread.opportunityId,
+    type: thread.type as ThreadType,
+    title: thread.title,
+    participantIds: thread.participantIds ?? [],
+    createdAt: thread.createdAt.toISOString(),
+    updatedAt: thread.updatedAt.toISOString(),
+    lastMessageId: thread.lastMessageId ?? undefined,
     participants,
     opportunityTitle: opportunity.title,
-    status: opportunity.status,
-    unreadCount: computeUnreadCount(thread, farmerId),
+    status: opportunity.status as "open" | "in_progress" | "closed",
+    unreadCount,
   };
+
   if (lastMessage) {
     summary.lastMessage = lastMessage;
   }
+
   return summary;
 };
 
-const upsertThread = (thread: ChatThread) => {
-  const index = threads.findIndex((item) => item.id === thread.id);
-  if (index >= 0) {
-    threads[index] = thread;
-  } else {
-    threads.push(thread);
-  }
-  ensureReadState(thread.id, thread.farmerId);
-};
-
-const createMessage = (
-  thread: ChatThread,
-  { authorId, authorRole, body }: PostMessageInput,
-): ChatMessage => {
-  const message: ChatMessage = {
-    id: uuid(),
-    threadId: thread.id,
-    authorId,
-    authorRole,
-    body,
-    createdAt: new Date().toISOString(),
-  };
-  messages.push(message);
-  thread.updatedAt = message.createdAt;
-  thread.lastMessageId = message.id;
-  upsertThread(thread);
-  return message;
-};
-
-const createThreadBase = (
-  type: ThreadType,
-  farmerId: string,
-  opportunityId: string,
-  title: string,
-  participantIds: string[],
-): ChatThread => {
-  const now = new Date().toISOString();
-  const thread: ChatThread = {
-    id: uuid(),
-    farmerId,
-    opportunityId,
-    type,
-    title,
-    participantIds,
-    createdAt: now,
-    updatedAt: now,
-  };
-  upsertThread(thread);
-  return thread;
-};
-
-const findExistingDm = ({
-  farmerId,
-  applicantId,
-  opportunityId,
-}: {
-  farmerId: string;
-  applicantId: string;
-  opportunityId: string;
-}) =>
-  threads.find(
-    (thread) =>
-      thread.type === "dm" &&
-      thread.farmerId === farmerId &&
-      thread.opportunityId === opportunityId &&
-      thread.participantIds.includes(applicantId),
-  );
-
 export const chatStore = {
-  listThreads: (farmerId: string, includeClosed = false): ChatThreadSummary[] => {
-    return threads
-      .filter((thread) => thread.farmerId === farmerId)
-      .filter((thread) => {
-        if (includeClosed) return true;
-        const opportunity = getOpportunity(thread.opportunityId);
-        return opportunity.status !== "closed";
-      })
-      .map((thread) => buildThreadSummary(thread, farmerId))
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  },
-
-  getThreadDetail: (threadId: string, farmerId: string): ChatThreadDetail => {
-    const thread = getThread(threadId);
-    const summary = buildThreadSummary(thread, farmerId);
-    const threadMessages = getThreadMessages(threadId);
-    return {
-      thread: summary,
-      messages: threadMessages,
-    };
-  },
-
-  createDmThread: (input: CreateDmThreadInput) => {
-    const { farmerId, applicantId, opportunityId, initialMessage } = input;
-    const opportunity = getOpportunity(opportunityId);
-    if (opportunity.farmerId !== farmerId) {
-      throw new Error("Farmer does not own this opportunity");
-    }
-    getApplicant(applicantId);
-
-    const existing = findExistingDm({ farmerId, applicantId, opportunityId });
-    const thread =
-      existing ??
-      createThreadBase("dm", farmerId, opportunityId, "個別チャット", [
+  listThreads: async (farmerId: string, includeClosed = false): Promise<ChatThreadSummary[]> => {
+    const threads = await prisma.chatThread.findMany({
+      where: {
         farmerId,
-        applicantId,
-      ]);
+        opportunity: includeClosed ? undefined : { status: { not: "closed" } },
+      },
+      include: {
+        opportunity: true,
+        participants: {
+          include: {
+            applicant: true,
+          },
+        },
+        lastMessage: true,
+      },
+      orderBy: {
+        updatedAt: "desc",
+      },
+    });
 
-    if (initialMessage) {
-      createMessage(thread, {
-        authorId: farmerId,
-        authorRole: "farmer",
-        body: initialMessage.body,
+    const farmer = await prisma.farmer.findUnique({
+      where: { id: farmerId },
+    });
+
+    const summaries = await Promise.all(
+      threads.map(async (thread) => {
+        const participants: ThreadParticipant[] = [];
+
+        // Add farmer
+        if (farmer) {
+          participants.push({
+            id: farmer.id,
+            role: "farmer",
+            name: farmer.name,
+            avatarUrl: farmer.avatarUrl ?? undefined,
+            tagline: farmer.tagline ?? undefined,
+          });
+        }
+
+        // Add applicants
+        for (const participant of thread.participants) {
+          if (participant.applicant) {
+            participants.push({
+              id: participant.applicant.id,
+              role: "applicant",
+              name: participant.applicant.name,
+              avatarUrl: participant.applicant.avatarUrl ?? undefined,
+            });
+          }
+        }
+
+        const unreadCount = await computeUnreadCount(thread.id, farmerId);
+
+        const lastMessage: ChatMessage | null = thread.lastMessage
+          ? {
+              id: thread.lastMessage.id,
+              threadId: thread.lastMessage.threadId,
+              authorId: thread.lastMessage.authorId,
+              authorRole: thread.lastMessage.authorRole as "farmer" | "applicant" | "system",
+              body: thread.lastMessage.body,
+              createdAt: thread.lastMessage.createdAt.toISOString(),
+            }
+          : null;
+
+        return buildThreadSummary(
+          {
+            ...thread,
+            participantIds: participants.map((p) => p.id),
+          },
+          farmerId,
+          thread.opportunity,
+          participants,
+          lastMessage,
+          unreadCount,
+        );
+      }),
+    );
+
+    return summaries;
+  },
+
+  getThreadDetail: async (threadId: string, farmerId: string): Promise<ChatThreadDetail> => {
+    const thread = await prisma.chatThread.findUnique({
+      where: { id: threadId },
+      include: {
+        opportunity: true,
+        participants: {
+          include: {
+            applicant: true,
+          },
+        },
+        lastMessage: true,
+      },
+    });
+
+    if (!thread) {
+      throw new Error(`Thread ${threadId} not found`);
+    }
+
+    const farmer = await prisma.farmer.findUnique({
+      where: { id: farmerId },
+    });
+
+    const participants: ThreadParticipant[] = [];
+
+    if (farmer) {
+      participants.push({
+        id: farmer.id,
+        role: "farmer",
+        name: farmer.name,
+        avatarUrl: farmer.avatarUrl ?? undefined,
+        tagline: farmer.tagline ?? undefined,
       });
     }
 
-    return buildThreadSummary(thread, farmerId);
+    for (const participant of thread.participants) {
+      if (participant.applicant) {
+        participants.push({
+          id: participant.applicant.id,
+          role: "applicant",
+          name: participant.applicant.name,
+          avatarUrl: participant.applicant.avatarUrl ?? undefined,
+        });
+      }
+    }
+
+    const unreadCount = await computeUnreadCount(thread.id, farmerId);
+
+    const lastMessage: ChatMessage | null = thread.lastMessage
+      ? {
+          id: thread.lastMessage.id,
+          threadId: thread.lastMessage.threadId,
+          authorId: thread.lastMessage.authorId,
+          authorRole: thread.lastMessage.authorRole as "farmer" | "applicant" | "system",
+          body: thread.lastMessage.body,
+          createdAt: thread.lastMessage.createdAt.toISOString(),
+        }
+      : null;
+
+    const summary = await buildThreadSummary(
+      {
+        ...thread,
+        participantIds: participants.map((p) => p.id),
+      },
+      farmerId,
+      thread.opportunity,
+      participants,
+      lastMessage,
+      unreadCount,
+    );
+
+    const messages = await prisma.chatMessage.findMany({
+      where: { threadId },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const chatMessages: ChatMessage[] = messages.map((msg) => ({
+      id: msg.id,
+      threadId: msg.threadId,
+      authorId: msg.authorId,
+      authorRole: msg.authorRole as "farmer" | "applicant" | "system",
+      body: msg.body,
+      createdAt: msg.createdAt.toISOString(),
+    }));
+
+    return {
+      thread: summary,
+      messages: chatMessages,
+    };
   },
 
-  createGroupThread: (input: CreateGroupThreadInput) => {
-    const { farmerId, opportunityId, name, participantIds } = input;
-    const opportunity = getOpportunity(opportunityId);
+  createDmThread: async (input: CreateDmThreadInput) => {
+    const { farmerId, applicantId, opportunityId, initialMessage } = input;
+
+    const opportunity = await prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+    });
+
+    if (!opportunity) {
+      throw new Error(`Opportunity ${opportunityId} not found`);
+    }
+
     if (opportunity.farmerId !== farmerId) {
       throw new Error("Farmer does not own this opportunity");
     }
 
-    participantIds.forEach((participantId) => {
-      if (participantId !== farmerId && !opportunity.participantIds.includes(participantId)) {
-        throw new Error(`Participant ${participantId} is not part of the opportunity`);
-      }
+    const applicant = await prisma.applicant.findUnique({
+      where: { id: applicantId },
     });
 
-    const thread = createThreadBase("group", farmerId, opportunityId, name, [
-      farmerId,
-      ...new Set(participantIds.filter((id) => id !== farmerId)),
-    ]);
+    if (!applicant) {
+      throw new Error(`Applicant ${applicantId} not found`);
+    }
 
-    return buildThreadSummary(thread, farmerId);
+    // Check for existing DM thread
+    const existingThread = await prisma.chatThread.findFirst({
+      where: {
+        type: "dm",
+        farmerId,
+        opportunityId,
+        participants: {
+          some: {
+            applicantId,
+          },
+        },
+      },
+    });
+
+    let thread;
+    if (existingThread) {
+      thread = existingThread;
+    } else {
+      thread = await prisma.chatThread.create({
+        data: {
+          farmerId,
+          opportunityId,
+          type: "dm",
+          title: "個別チャット",
+          participants: {
+            create: {
+              applicantId,
+            },
+          },
+        },
+      });
+
+      // Create read state
+      await prisma.threadReadState.create({
+        data: {
+          threadId: thread.id,
+          farmerId,
+          lastReadAt: new Date(0),
+        },
+      });
+    }
+
+    if (initialMessage) {
+      const message = await prisma.chatMessage.create({
+        data: {
+          threadId: thread.id,
+          authorId: farmerId,
+          authorRole: "farmer",
+          body: initialMessage.body,
+        },
+      });
+
+      await prisma.chatThread.update({
+        where: { id: thread.id },
+        data: {
+          lastMessageId: message.id,
+          updatedAt: message.createdAt,
+        },
+      });
+    }
+
+    return this.getThreadDetail(thread.id, farmerId).then((detail) => detail.thread);
   },
 
-  postMessage: (threadId: string, input: PostMessageInput, farmerId: string) => {
-    const thread = getThread(threadId);
+  createGroupThread: async (input: CreateGroupThreadInput) => {
+    const { farmerId, opportunityId, name, participantIds } = input;
+
+    const opportunity = await prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+      include: {
+        participants: true,
+      },
+    });
+
+    if (!opportunity) {
+      throw new Error(`Opportunity ${opportunityId} not found`);
+    }
+
+    if (opportunity.farmerId !== farmerId) {
+      throw new Error("Farmer does not own this opportunity");
+    }
+
+    const validApplicantIds = new Set(opportunity.participants.map((p) => p.applicantId));
+
+    for (const participantId of participantIds) {
+      if (participantId !== farmerId && !validApplicantIds.has(participantId)) {
+        throw new Error(`Participant ${participantId} is not part of the opportunity`);
+      }
+    }
+
+    const applicantIds = participantIds.filter((id) => id !== farmerId);
+
+    const thread = await prisma.chatThread.create({
+      data: {
+        farmerId,
+        opportunityId,
+        type: "group",
+        title: name,
+        participants: {
+          create: applicantIds.map((applicantId) => ({
+            applicantId,
+          })),
+        },
+      },
+    });
+
+    await prisma.threadReadState.create({
+      data: {
+        threadId: thread.id,
+        farmerId,
+        lastReadAt: new Date(0),
+      },
+    });
+
+    return this.getThreadDetail(thread.id, farmerId).then((detail) => detail.thread);
+  },
+
+  postMessage: async (threadId: string, input: PostMessageInput, farmerId: string) => {
+    const thread = await prisma.chatThread.findUnique({
+      where: { id: threadId },
+    });
+
+    if (!thread) {
+      throw new Error(`Thread ${threadId} not found`);
+    }
+
     if (thread.farmerId !== farmerId && input.authorRole === "farmer") {
       throw new Error("Farmer cannot post to threads they do not own");
     }
-    const message = createMessage(thread, input);
+
+    const message = await prisma.chatMessage.create({
+      data: {
+        threadId,
+        authorId: input.authorId,
+        authorRole: input.authorRole,
+        body: input.body,
+      },
+    });
+
+    await prisma.chatThread.update({
+      where: { id: threadId },
+      data: {
+        lastMessageId: message.id,
+        updatedAt: message.createdAt,
+      },
+    });
+
+    const detail = await this.getThreadDetail(threadId, thread.farmerId);
+
     return {
-      message,
-      thread: buildThreadSummary(thread, thread.farmerId),
+      message: {
+        id: message.id,
+        threadId: message.threadId,
+        authorId: message.authorId,
+        authorRole: message.authorRole as "farmer" | "applicant" | "system",
+        body: message.body,
+        createdAt: message.createdAt.toISOString(),
+      },
+      thread: detail.thread,
     };
   },
 
-  markThreadRead: (threadId: string, input: MarkThreadReadInput) => {
-    const thread = getThread(threadId);
-    const readState = ensureReadState(threadId, input.farmerId);
-    readState.lastReadAt = input.readAt ?? new Date().toISOString();
-    return buildThreadSummary(thread, input.farmerId);
+  markThreadRead: async (threadId: string, input: MarkThreadReadInput) => {
+    const thread = await prisma.chatThread.findUnique({
+      where: { id: threadId },
+    });
+
+    if (!thread) {
+      throw new Error(`Thread ${threadId} not found`);
+    }
+
+    const readAt = input.readAt ? new Date(input.readAt) : new Date();
+
+    await prisma.threadReadState.upsert({
+      where: {
+        threadId_farmerId: {
+          threadId,
+          farmerId: input.farmerId,
+        },
+      },
+      create: {
+        threadId,
+        farmerId: input.farmerId,
+        lastReadAt: readAt,
+      },
+      update: {
+        lastReadAt: readAt,
+      },
+    });
+
+    const detail = await this.getThreadDetail(threadId, input.farmerId);
+    return detail.thread;
   },
 
-  broadcastToOpportunity: (opportunityId: string, input: BroadcastMessageInput) => {
-    const opportunity = getOpportunity(opportunityId);
+  broadcastToOpportunity: async (opportunityId: string, input: BroadcastMessageInput) => {
+    const opportunity = await prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+      include: {
+        participants: true,
+      },
+    });
+
+    if (!opportunity) {
+      throw new Error(`Opportunity ${opportunityId} not found`);
+    }
+
     if (opportunity.farmerId !== input.farmerId) {
       throw new Error("Farmer does not own this opportunity");
     }
 
-    let thread = threads.find(
-      (item) =>
-        item.type === "broadcast" &&
-        item.opportunityId === opportunityId &&
-        item.farmerId === input.farmerId,
-    );
-    if (!thread) {
-      thread = createThreadBase(
-        "broadcast",
-        input.farmerId,
+    let thread = await prisma.chatThread.findFirst({
+      where: {
+        type: "broadcast",
         opportunityId,
-        `${opportunity.title} 一斉連絡`,
-        [opportunity.farmerId, ...opportunity.participantIds],
-      );
-    }
-
-    const message = createMessage(thread, {
-      authorId: input.farmerId,
-      authorRole: "farmer",
-      body: input.body,
+        farmerId: input.farmerId,
+      },
     });
 
+    if (!thread) {
+      thread = await prisma.chatThread.create({
+        data: {
+          farmerId: input.farmerId,
+          opportunityId,
+          type: "broadcast",
+          title: `${opportunity.title} 一斉連絡`,
+          participants: {
+            create: opportunity.participants.map((p) => ({
+              applicantId: p.applicantId,
+            })),
+          },
+        },
+      });
+
+      await prisma.threadReadState.create({
+        data: {
+          threadId: thread.id,
+          farmerId: input.farmerId,
+          lastReadAt: new Date(0),
+        },
+      });
+    }
+
+    const message = await prisma.chatMessage.create({
+      data: {
+        threadId: thread.id,
+        authorId: input.farmerId,
+        authorRole: "farmer",
+        body: input.body,
+      },
+    });
+
+    await prisma.chatThread.update({
+      where: { id: thread.id },
+      data: {
+        lastMessageId: message.id,
+        updatedAt: message.createdAt,
+      },
+    });
+
+    const detail = await this.getThreadDetail(thread.id, input.farmerId);
+
     return {
-      thread: buildThreadSummary(thread, input.farmerId),
-      message,
+      thread: detail.thread,
+      message: {
+        id: message.id,
+        threadId: message.threadId,
+        authorId: message.authorId,
+        authorRole: message.authorRole as "farmer" | "applicant" | "system",
+        body: message.body,
+        createdAt: message.createdAt.toISOString(),
+      },
     };
   },
 
-  listOpportunitiesWithParticipants: (farmerId: string) => {
-    return opportunities
-      .filter((opportunity) => opportunity.farmerId === farmerId)
-      .map((opportunity) => ({
-        ...opportunity,
-        participants: opportunity.participantIds.map((id) => getApplicant(id)),
-      }));
+  listOpportunitiesWithParticipants: async (farmerId: string): Promise<Opportunity[]> => {
+    const opportunities = await prisma.opportunity.findMany({
+      where: { farmerId },
+      include: {
+        participants: {
+          include: {
+            applicant: true,
+          },
+        },
+        farmland: true,
+      },
+    });
+
+    return opportunities.map((opp) => ({
+      id: opp.id,
+      title: opp.title,
+      status: opp.status as "open" | "in_progress" | "closed",
+      startDate: opp.startDate.toISOString(),
+      endDate: opp.endDate.toISOString(),
+      farmName: opp.farmName,
+      description: opp.description,
+      farmerId: opp.farmerId,
+      farmlandId: opp.farmlandId ?? undefined,
+      farmland: opp.farmland ? {
+        id: opp.farmland.id,
+        name: opp.farmland.name,
+        address: opp.farmland.address,
+        prefecture: opp.farmland.prefecture,
+        city: opp.farmland.city,
+        imageUrl: opp.farmland.imageUrl ?? undefined,
+      } : undefined,
+      managingFarmerIds: [opp.farmerId], // Simplified for now
+      participantIds: opp.participants.map((p) => p.applicantId),
+    }));
   },
 };
-

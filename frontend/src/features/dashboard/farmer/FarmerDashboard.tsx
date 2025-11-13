@@ -22,6 +22,7 @@ import {
   Heading,
   HStack,
   CloseButton,
+  Image,
   Input,
   InputGroup,
   InputLeftElement,
@@ -92,6 +93,9 @@ import type {
   OpportunityStatusLabel,
 } from "@/features/opportunities/types";
 import { FarmerChatCenter } from "./components/FarmerChatCenter";
+import { mileApi, type MileBalance, type MileTransaction } from "./api/miles";
+import { FarmlandManager } from "./components/FarmlandManager";
+import { farmlandsApi, type Farmland } from "./api/farmlands";
 
 type FarmerTab = "home" | "active" | "map" | "chat" | "profile";
 
@@ -155,6 +159,7 @@ export default function FarmerDashboard() {
   const mapDetailModal = useDisclosure();
   const profileModal = useDisclosure();
   const milesModal = useDisclosure();
+  const farmlandModal = useDisclosure();
   const onboardingGuide = useDisclosure({ defaultIsOpen: true });
   const editModal = useDisclosure();
   const [activeTab, setActiveTab] = useState<FarmerTab>("home");
@@ -191,6 +196,10 @@ export default function FarmerDashboard() {
   });
   const [chatFocusSignal, setChatFocusSignal] = useState<{ id: string; nonce: number } | null>(null);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [mileBalance, setMileBalance] = useState<MileBalance | null>(null);
+  const [loadingMileBalance, setLoadingMileBalance] = useState(false);
+  const [farmlands, setFarmlands] = useState<Farmland[]>([]);
+  const [selectedFarmlandId, setSelectedFarmlandId] = useState<string>("");
 
   const profileInitialValue = useMemo<ProfileEditorValue>(
     () => ({
@@ -491,6 +500,42 @@ export default function FarmerDashboard() {
     setChatFocusSignal({ id: opportunityId, nonce: Date.now() });
     setActiveTab("chat");
   };
+
+  const fetchMileBalance = useCallback(async () => {
+    if (!currentUser) return;
+    setLoadingMileBalance(true);
+    try {
+      const balance = await mileApi.getBalance(currentUser.id);
+      setMileBalance(balance);
+    } catch (error) {
+      console.error(error);
+      toast({ title: "マイル残高の取得に失敗しました", status: "error" });
+    } finally {
+      setLoadingMileBalance(false);
+    }
+  }, [currentUser, toast]);
+
+  useEffect(() => {
+    if (milesModal.isOpen && currentUser) {
+      fetchMileBalance();
+    }
+  }, [milesModal.isOpen, currentUser, fetchMileBalance]);
+
+  const fetchFarmlands = useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const data = await farmlandsApi.getFarmlands(currentUser.id);
+      setFarmlands(data);
+    } catch (error) {
+      console.error(error);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (createModal.isOpen && currentUser) {
+      fetchFarmlands();
+    }
+  }, [createModal.isOpen, currentUser, fetchFarmlands]);
 
   useEffect(() => {
     if (!mapDetailModal.isOpen) {
@@ -1520,6 +1565,21 @@ export default function FarmerDashboard() {
       <Card variant="outline" borderRadius="xl">
         <CardBody>
           <Stack spacing={3}>
+            <HStack justify="space-between">
+              <Text fontWeight="semibold">農地管理</Text>
+              <Button size="sm" colorScheme="green" onClick={farmlandModal.onOpen}>
+                農地を管理
+              </Button>
+            </HStack>
+            <Text fontSize="xs" color="gray.600">
+              登録済みの農地は募集作成時に選択できます。
+            </Text>
+          </Stack>
+        </CardBody>
+      </Card>
+      <Card variant="outline" borderRadius="xl">
+        <CardBody>
+          <Stack spacing={3}>
             <Text fontWeight="semibold">本人確認ステータス</Text>
             <Badge colorScheme={profileSummary.kycStatus === "approved" ? "green" : "yellow"} w="fit-content">
               {profileSummary.kycStatus === "approved" ? "承認済み" : profileSummary.kycStatus === "pending" ? "審査中" : "未提出"}
@@ -1616,57 +1676,94 @@ export default function FarmerDashboard() {
         initialValue={profileInitialValue}
         role="farmer"
       />
-      <Modal isOpen={milesModal.isOpen} onClose={milesModal.onClose}>
+      <Modal isOpen={milesModal.isOpen} onClose={milesModal.onClose} size="lg">
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>マイルサマリー（モック）</ModalHeader>
+          <ModalHeader>マイルサマリー</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
-            <Stack spacing={4}>
-              <Stack spacing={1}>
-                <Text fontSize="sm" color="gray.500">
-                  保有マイル
-                </Text>
-                <Text fontSize="2xl" fontWeight="bold" color="green.600">
-                  {(currentUser?.miles ?? 0).toLocaleString()} mile
-                </Text>
+            {loadingMileBalance ? (
+              <Stack align="center" py={8}>
+                <Text>読み込み中...</Text>
               </Stack>
-              <Stack spacing={2}>
-                <Text fontSize="sm" color="gray.600">
-                  マイル推移（過去30日・モック）
-                </Text>
-                <Progress
-                  value={Math.min(((currentUser?.miles ?? 0) % 15000) / 150, 100)}
-                  colorScheme="green"
-                  borderRadius="full"
-                />
-                <Text fontSize="xs" color="gray.500">
-                  今後は実際の加算履歴とグラフを表示予定です。
-                </Text>
+            ) : (
+              <Stack spacing={4}>
+                <Stack spacing={1}>
+                  <Text fontSize="sm" color="gray.500">
+                    保有マイル
+                  </Text>
+                  <Text fontSize="2xl" fontWeight="bold" color="green.600">
+                    {(mileBalance?.totalMiles ?? 0).toLocaleString()} mile
+                  </Text>
+                </Stack>
+                <Stack spacing={2}>
+                  <Text fontSize="sm" color="gray.600" fontWeight="semibold">
+                    最近のトランザクション
+                  </Text>
+                  {mileBalance && mileBalance.transactions.length > 0 ? (
+                    <Box borderRadius="lg" borderWidth="1px" overflow="hidden">
+                      <Table variant="simple" size="sm">
+                        <Thead bg="gray.50">
+                          <Tr>
+                            <Th>日時</Th>
+                            <Th>種類</Th>
+                            <Th>説明</Th>
+                            <Th isNumeric>変動</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {mileBalance.transactions.slice(0, 10).map((tx) => (
+                            <Tr key={tx.id}>
+                              <Td fontSize="xs">
+                                {new Date(tx.createdAt).toLocaleDateString("ja-JP")}
+                              </Td>
+                              <Td>
+                                <Badge
+                                  colorScheme={
+                                    tx.type === "earn" ? "green" : tx.type === "spend" ? "red" : "blue"
+                                  }
+                                  fontSize="xs"
+                                >
+                                  {tx.type === "earn" ? "獲得" : tx.type === "spend" ? "消費" : "交換"}
+                                </Badge>
+                              </Td>
+                              <Td fontSize="xs">{tx.description}</Td>
+                              <Td isNumeric fontSize="xs" color={tx.amount >= 0 ? "green.600" : "red.600"}>
+                                {tx.amount >= 0 ? "+" : ""}
+                                {tx.amount.toLocaleString()} mile
+                              </Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    </Box>
+                  ) : (
+                    <Text fontSize="sm" color="gray.500">
+                      トランザクション履歴がありません。
+                    </Text>
+                  )}
+                </Stack>
+                <Stack spacing={2}>
+                  <Text fontSize="sm" color="gray.600">
+                    交換メニュー
+                  </Text>
+                  {FARMER_MILE_OPTIONS.map((option) => (
+                    <Button
+                      key={option.value}
+                      variant="outline"
+                      justifyContent="space-between"
+                      rightIcon={<FiTrendingUp />}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </Stack>
               </Stack>
-              <Stack spacing={2}>
-                <Text fontSize="sm" color="gray.600">
-                  交換メニュー
-                </Text>
-                {FARMER_MILE_OPTIONS.map((option) => (
-                  <Button
-                    key={option.value}
-                    variant="outline"
-                    justifyContent="space-between"
-                    rightIcon={<FiTrendingUp />}
-                  >
-                    {option.label}
-                  </Button>
-                ))}
-              </Stack>
-            </Stack>
+            )}
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={milesModal.onClose}>
               閉じる
-            </Button>
-            <Button colorScheme="green" onClick={milesModal.onClose}>
-              交換リクエスト（モック）
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1690,11 +1787,27 @@ export default function FarmerDashboard() {
                 <Text fontSize="sm" color="gray.700">
                   {activeOpportunity.description}
                 </Text>
+                {(activeOpportunity as any).farmland?.imageUrl && (
+                  <Box borderRadius="md" overflow="hidden">
+                    <Image
+                      src={(activeOpportunity as any).farmland.imageUrl}
+                      alt={(activeOpportunity as any).farmland?.name || "農地画像"}
+                      w="100%"
+                      maxH="300px"
+                      objectFit="cover"
+                    />
+                  </Box>
+                )}
                 <Stack spacing={1} fontSize="sm" color="gray.600">
                   <Text>
                     期間: {activeOpportunity.startDate} 〜 {activeOpportunity.endDate}
                   </Text>
                   <Text>所在地: {activeOpportunity.location.address}</Text>
+                  {(activeOpportunity as any).farmland && (
+                    <Text>
+                      実施農地: {(activeOpportunity as any).farmland.name} - {(activeOpportunity as any).farmland.prefecture} {(activeOpportunity as any).farmland.city}
+                    </Text>
+                  )}
                   <Text>報酬: {activeOpportunity.rewardMiles} mile</Text>
                   <Text>
                     応募状況: {activeOpportunity.capacity.filled}/
@@ -1846,9 +1959,41 @@ export default function FarmerDashboard() {
                 <Input placeholder="例：秋の果物収穫サポート" />
               </FormControl>
               <FormControl>
-                <FormLabel>実施地域</FormLabel>
-                <Input placeholder="例：愛知県 豊橋市石巻町" />
+                <FormLabel>実施農地</FormLabel>
+                <Select
+                  placeholder="農地を選択（プロフィールで登録済みの農地）"
+                  value={selectedFarmlandId}
+                  onChange={(e) => setSelectedFarmlandId(e.target.value)}
+                >
+                  {farmlands.map((farmland) => (
+                    <option key={farmland.id} value={farmland.id}>
+                      {farmland.name} - {farmland.prefecture} {farmland.city}
+                    </option>
+                  ))}
+                </Select>
+                <FormHelperText fontSize="xs">
+                  プロフィールで農地を登録していない場合は、手動で入力してください。
+                </FormHelperText>
               </FormControl>
+              {selectedFarmlandId && (
+                <FormControl>
+                  <FormLabel>実施地域（自動入力）</FormLabel>
+                  <Input
+                    value={
+                      farmlands.find((f) => f.id === selectedFarmlandId)?.address ||
+                      ""
+                    }
+                    readOnly
+                    bg="gray.50"
+                  />
+                </FormControl>
+              )}
+              {!selectedFarmlandId && (
+                <FormControl>
+                  <FormLabel>実施地域（手動入力）</FormLabel>
+                  <Input placeholder="例：愛知県 豊橋市石巻町" />
+                </FormControl>
+              )}
               <FormControl>
                 <FormLabel>実施期間</FormLabel>
                 <HStack>
@@ -1879,6 +2024,11 @@ export default function FarmerDashboard() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+      <FarmlandManager
+        farmerId={currentUser?.id ?? "farmer-001"}
+        isOpen={farmlandModal.isOpen}
+        onClose={farmlandModal.onClose}
+      />
     </Flex>
   );
 }
