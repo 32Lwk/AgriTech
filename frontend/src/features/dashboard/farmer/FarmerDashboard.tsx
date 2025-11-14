@@ -471,6 +471,7 @@ export default function FarmerDashboard() {
   }, [mapMarkers]);
 
   const mapPanelHeight = useBreakpointValue({ base: 320, md: 420, lg: 520 }) ?? 320;
+  const isMobileDashboard = useBreakpointValue({ base: true, md: false }) ?? false;
   const mapListMaxHeight = useBreakpointValue({
     base: "45vh",
     md: "calc(100vh - 360px)",
@@ -633,6 +634,23 @@ export default function FarmerDashboard() {
   const pendingCount = filteredApplicants.filter(
     (applicant) => applicantStatuses[applicant.id] === "pending",
   ).length;
+
+  const pendingApplicantsDetailed = useMemo(() => {
+    return APPLICANTS.filter((applicant) => {
+      if (applicantStatuses[applicant.id] !== "pending") {
+        return false;
+      }
+      return ownedOpportunityIds.has(applicant.opportunityId);
+    })
+      .map((applicant) => {
+        const opportunity = ownedOpportunityMap.get(applicant.opportunityId);
+        return {
+          ...applicant,
+          opportunity,
+        };
+      })
+      .sort((a, b) => a.appliedAt.localeCompare(b.appliedAt));
+  }, [applicantStatuses, ownedOpportunityIds, ownedOpportunityMap]);
 
   const handleApplicantAction = (id: string, status: string) => {
     setApplicantStatuses((prev) => ({ ...prev, [id]: status }));
@@ -1100,17 +1118,239 @@ export default function FarmerDashboard() {
   const activeOpportunityCount =
     opportunityStatusSummary.open + opportunityStatusSummary.in_progress;
 
+  const todaysActionItems = useMemo(() => {
+    const items: Array<{
+      id: string;
+      label: string;
+      description: string;
+      status: "info" | "warning" | "success";
+      actionLabel?: string;
+      onClick?: () => void;
+    }> = [];
+
+    if (pendingCount > 0) {
+      items.push({
+        id: "pending-applicants",
+        label: "審査待ち応募",
+        description: `未対応の応募が ${pendingCount} 件あります。承認または差戻しを行いましょう。`,
+        status: "warning",
+        actionLabel: "応募管理を開く",
+        onClick: () => setActiveTab("active"),
+      });
+    }
+
+    const today = new Date();
+    const todayKey = today.toISOString().split("T")[0];
+    const todayOpportunities = ownedOpportunities.filter((item) => {
+      return item.startDate <= todayKey && item.endDate >= todayKey;
+    });
+    if (todayOpportunities.length > 0) {
+      items.push({
+        id: "today-opportunities",
+        label: "本日実施の募集",
+        description: `${todayOpportunities.length} 件の募集が本日実施予定です。最終確認をしましょう。`,
+        status: "info",
+        actionLabel: "スケジュールを確認",
+        onClick: () => {
+          const first = todayOpportunities[0];
+          if (first) {
+            handleOpportunityOpen(first);
+          }
+        },
+      });
+    }
+
+    if ((mileBalance?.totalMiles ?? currentUser?.miles ?? 0) < 2000) {
+      items.push({
+        id: "mile-balance",
+        label: "マイル残高の確認",
+        description: "保有マイルがやや少なくなっています。次回の交換計画を確認しましょう。",
+        status: "info",
+        actionLabel: "マイルを見る",
+        onClick: () => milesModal.onOpen(),
+      });
+    }
+
+    if (uploadedImages.length > 8) {
+      items.push({
+        id: "image-capacity",
+        label: "画像整理の提案",
+        description: "募集の画像が上限に近づいています。不要な画像を整理しましょう。",
+        status: "success",
+        actionLabel: "募集を編集",
+        onClick: () => setActiveTab("home"),
+      });
+    }
+
+    return items;
+  }, [
+    pendingCount,
+    ownedOpportunities,
+    handleOpportunityOpen,
+    milesModal,
+    mileBalance?.totalMiles,
+    currentUser?.miles,
+    uploadedImages.length,
+  ]);
+
   const homeContent = (
     <Stack spacing={6}>
-      <Stack spacing={1}>
-        <Heading size="md">こんにちは、{profileInitialValue.name ?? "ファーマー"} さん</Heading>
-        <Text color="gray.600" fontSize="sm">
-          運用中 {activeOpportunityCount} 件（公開中 {opportunityStatusSummary.open} 件・調整中{" "}
-          {opportunityStatusSummary.in_progress} 件）の募集と、審査待ち応募 {pendingCount} 名を確認できます。
-        </Text>
+      <Stack spacing={isMobileDashboard ? 4 : 3}>
+        <Stack spacing={1}>
+          <Heading size="md">こんにちは、{profileInitialValue.name ?? "ファーマー"} さん</Heading>
+          <Text color="gray.600" fontSize="sm">
+            運用中 {activeOpportunityCount} 件（公開中 {opportunityStatusSummary.open} 件・調整中{" "}
+            {opportunityStatusSummary.in_progress} 件）の募集と、審査待ち応募 {pendingCount} 名を確認できます。
+          </Text>
+        </Stack>
+
+        {todaysActionItems.length > 0 ? (
+          <Card variant="filled" bg="green.50" borderRadius="xl">
+            <CardBody>
+              <Stack spacing={3}>
+                <HStack justify="space-between" align="center">
+                  <Heading size="sm">今日対応すべきこと</Heading>
+                  <Badge colorScheme="green" borderRadius="full" px={3}>
+                    {todaysActionItems.length} 件
+                  </Badge>
+                </HStack>
+                <Stack spacing={3}>
+                  {todaysActionItems.map((item) => (
+                    <Box
+                      key={item.id}
+                      borderRadius="lg"
+                      borderWidth="1px"
+                      borderColor={
+                        item.status === "warning"
+                          ? "orange.200"
+                          : item.status === "success"
+                            ? "green.200"
+                            : "blue.200"
+                      }
+                      bg="white"
+                      px={4}
+                      py={3}
+                    >
+                      <HStack justify="space-between" align="flex-start" spacing={4}>
+                        <Stack spacing={1} flex="1">
+                          <Text fontWeight="semibold">{item.label}</Text>
+                          <Text fontSize="sm" color="gray.600">
+                            {item.description}
+                          </Text>
+                        </Stack>
+                        {item.actionLabel ? (
+                          <Button
+                            size="sm"
+                            colorScheme="green"
+                            variant="outline"
+                            onClick={item.onClick}
+                          >
+                            {item.actionLabel}
+                          </Button>
+                        ) : null}
+                      </HStack>
+                    </Box>
+                  ))}
+                </Stack>
+              </Stack>
+            </CardBody>
+          </Card>
+        ) : null}
+
+        {pendingApplicantsDetailed.length > 0 ? (
+          <Card variant="outline" borderRadius="xl">
+            <CardHeader pb={2}>
+              <HStack justify="space-between" align="center">
+                <Heading size="sm">審査待ちの応募者一覧</Heading>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  colorScheme="green"
+                  onClick={() => setActiveTab("active")}
+                >
+                  応募管理へ移動
+                </Button>
+              </HStack>
+            </CardHeader>
+            <CardBody pt={0}>
+              <Stack spacing={3}>
+                {pendingApplicantsDetailed.slice(0, isMobileDashboard ? 3 : 5).map((applicant) => (
+                  <Box
+                    key={applicant.id}
+                    borderWidth="1px"
+                    borderRadius="lg"
+                    borderColor="gray.200"
+                    px={3}
+                    py={3}
+                  >
+                    <Stack spacing={1}>
+                      <HStack justify="space-between" align="center">
+                        <Stack spacing={0}>
+                          <Text fontWeight="semibold">{applicant.name}</Text>
+                          <Text fontSize="xs" color="gray.500">
+                            {applicant.profile.age}歳・{applicant.profile.occupation}・
+                            {applicant.profile.location}
+                          </Text>
+                        </Stack>
+                        <Badge colorScheme="orange">審査待ち</Badge>
+                      </HStack>
+                      <Text fontSize="sm" color="gray.600" noOfLines={2}>
+                        {applicant.message}
+                      </Text>
+                      <HStack justify="space-between" align="center">
+                        <Text fontSize="xs" color="gray.500">
+                          応募日時: {new Date(applicant.appliedAt).toLocaleString("ja-JP")}
+                        </Text>
+                        <Stack direction="row" spacing={2}>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            colorScheme="green"
+                            onClick={() => handleApplicantAction(applicant.id, "approved")}
+                          >
+                            承認
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={() => handleApplicantAction(applicant.id, "rejected")}
+                          >
+                            却下
+                          </Button>
+                        </Stack>
+                      </HStack>
+                      {applicant.opportunity ? (
+                        <HStack spacing={2} pt={1}>
+                          <Badge colorScheme="green" variant="subtle">
+                            {applicant.opportunity.title}
+                          </Badge>
+                          <Text fontSize="xs" color="gray.500">
+                            {applicant.opportunity.location.prefecture} {applicant.opportunity.location.city}
+                          </Text>
+                        </HStack>
+                      ) : null}
+                    </Stack>
+                  </Box>
+                ))}
+                {pendingApplicantsDetailed.length > (isMobileDashboard ? 3 : 5) ? (
+                  <Button
+                    size="sm"
+                    variant="link"
+                    alignSelf="flex-end"
+                    onClick={() => setActiveTab("active")}
+                  >
+                    すべて表示
+                  </Button>
+                ) : null}
+              </Stack>
+            </CardBody>
+          </Card>
+        ) : null}
       </Stack>
 
-      {onboardingGuide.isOpen ? (
+      <Stack spacing={1}>
+        {onboardingGuide.isOpen ? (
         <Alert
           status="success"
           borderRadius="lg"
@@ -1149,9 +1389,9 @@ export default function FarmerDashboard() {
             aria-label="オンボーディングを閉じる"
           />
         </Alert>
-      ) : null}
+        ) : null}
 
-      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
         <StatCard
           key="open"
           label="公開中"
