@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -14,12 +15,13 @@ import type {
   RegisterPayload,
   UserProfile,
 } from "./types";
+import { userApi } from "./api/users";
 
 type AuthContextValue = {
   currentUser: UserProfile | null;
   users: UserProfile[];
-  login: (payload: LoginPayload) => AuthResult;
-  register: (payload: RegisterPayload) => AuthResult;
+  login: (payload: LoginPayload) => Promise<AuthResult>;
+  register: (payload: RegisterPayload) => Promise<AuthResult>;
   loginWithProvider: (
     role: UserProfile["role"],
     options?: { userId?: string },
@@ -27,7 +29,8 @@ type AuthContextValue = {
   logout: () => void;
   submitKycRequest: (userId: string) => void;
   updateKycStatus: (userId: string, status: KycStatus) => void;
-  updateProfile: (userId: string, updates: Partial<UserProfile>) => void;
+  updateProfile: (userId: string, updates: Partial<UserProfile>) => Promise<void>;
+  isLoading?: boolean;
 };
 
 const calcAgeFromBirthDate = (birthDate: string): number => {
@@ -217,59 +220,115 @@ type AuthProviderProps = {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [users, setUsers] = useState<UserProfile[]>(DEFAULT_USERS);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [useApiMode, setUseApiMode] = useState(false); // API連携モードの切り替え
 
   const login = useCallback(
-    (payload: LoginPayload): AuthResult => {
-      const user = users.find(
-        (candidate) =>
-          candidate.email.toLowerCase() === payload.email.toLowerCase() &&
-          candidate.password === payload.password,
-      );
+    async (payload: LoginPayload): Promise<AuthResult> => {
+      try {
+        setIsLoading(true);
+        if (useApiMode) {
+          // API連携モード
+          const result = await userApi.login(payload);
+          if (result.success && result.user) {
+            setCurrentUser(result.user);
+            // ローカル状態も更新（後方互換性のため）
+            setUsers((prev) => {
+              const existing = prev.find((u) => u.id === result.user!.id);
+              if (existing) {
+                return prev.map((u) => (u.id === result.user!.id ? result.user! : u));
+              }
+              return [...prev, result.user!];
+            });
+          }
+          setIsLoading(false);
+          return result;
+        } else {
+          // モックモード（後方互換性）
+          const user = users.find(
+            (candidate) =>
+              candidate.email.toLowerCase() === payload.email.toLowerCase() &&
+              candidate.password === payload.password,
+          );
 
-      if (!user) {
+          if (!user) {
+            setIsLoading(false);
+            return {
+              success: false,
+              error: "メールアドレスもしくはパスワードが正しくありません。",
+            };
+          }
+
+          const normalized = {
+            ...user,
+            age: calcAgeFromBirthDate(user.birthDate),
+          };
+          setCurrentUser(normalized);
+          setIsLoading(false);
+          return {
+            success: true,
+            user: normalized,
+          };
+        }
+      } catch (error: unknown) {
+        setIsLoading(false);
         return {
           success: false,
-          error: "メールアドレスもしくはパスワードが正しくありません。",
+          error: error instanceof Error ? error.message : "ログインに失敗しました",
         };
       }
-
-      const normalized = {
-        ...user,
-        age: calcAgeFromBirthDate(user.birthDate),
-      };
-      setCurrentUser(normalized);
-      return {
-        success: true,
-        user: normalized,
-      };
     },
-    [users],
+    [users, useApiMode],
   );
 
   const register = useCallback(
-    (payload: RegisterPayload): AuthResult => {
-      const exists = users.some(
-        (candidate) =>
-          candidate.email.toLowerCase() === payload.email.toLowerCase(),
-      );
+    async (payload: RegisterPayload): Promise<AuthResult> => {
+      try {
+        setIsLoading(true);
+        if (useApiMode) {
+          // API連携モード
+          const result = await userApi.register(payload);
+          if (result.success && result.user) {
+            setCurrentUser(result.user);
+            // ローカル状態も更新（後方互換性のため）
+            setUsers((prev) => [...prev, result.user!]);
+          }
+          setIsLoading(false);
+          return result;
+        } else {
+          // モックモード（後方互換性）
+          const exists = users.some(
+            (candidate) =>
+              candidate.email.toLowerCase() === payload.email.toLowerCase(),
+          );
 
-      if (exists) {
+          if (exists) {
+            setIsLoading(false);
+            return {
+              success: false,
+              error: "このメールアドレスは既に登録されています。",
+            };
+          }
+
+          const user = buildUser(payload);
+          setUsers((prev) => [...prev, user]);
+          setCurrentUser(user);
+          setIsLoading(false);
+
+          return {
+            success: true,
+            user,
+          };
+        }
+      } catch (error: unknown) {
+        setIsLoading(false);
         return {
           success: false,
-          error: "このメールアドレスは既に登録されています。",
+          error: error instanceof Error ? error.message : "登録に失敗しました",
         };
       }
-
-      const user = buildUser(payload);
-      setUsers((prev) => [...prev, user]);
-      setCurrentUser(user);
-
-      return {
-        success: true,
-        user,
-      };
     },
-    [users],
+    [users, useApiMode],
   );
 
   const loginWithProvider = useCallback(
@@ -355,17 +414,59 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 
   const updateProfile = useCallback(
-    (userId: string, updates: Partial<UserProfile>) => {
-      setUsers((prev) =>
-        prev.map((user) => (user.id === userId ? applyProfileUpdates(user, updates) : user)),
-      );
-      setCurrentUser((prev) => {
-        if (!prev || prev.id !== userId) return prev;
-        return applyProfileUpdates(prev, updates);
-      });
+    async (userId: string, updates: Partial<UserProfile>) => {
+      try {
+        if (useApiMode) {
+          // API連携モード
+          const updatedUser = await userApi.updateUser(userId, updates);
+          if (updatedUser) {
+            setCurrentUser(updatedUser);
+            // ローカル状態も更新（後方互換性のため）
+            setUsers((prev) =>
+              prev.map((user) => (user.id === userId ? updatedUser : user)),
+            );
+          }
+        } else {
+          // モックモード（後方互換性）
+          setUsers((prev) =>
+            prev.map((user) => (user.id === userId ? applyProfileUpdates(user, updates) : user)),
+          );
+          setCurrentUser((prev) => {
+            if (!prev || prev.id !== userId) return prev;
+            return applyProfileUpdates(prev, updates);
+          });
+        }
+      } catch (error) {
+        console.error("プロフィール更新エラー:", error);
+        // エラー時はモックモードで更新を試みる
+        setUsers((prev) =>
+          prev.map((user) => (user.id === userId ? applyProfileUpdates(user, updates) : user)),
+        );
+        setCurrentUser((prev) => {
+          if (!prev || prev.id !== userId) return prev;
+          return applyProfileUpdates(prev, updates);
+        });
+      }
     },
-    [applyProfileUpdates],
+    [applyProfileUpdates, useApiMode],
   );
+
+  // API連携モードの初期化（環境変数または設定で制御可能）
+  useEffect(() => {
+    const apiMode = localStorage.getItem("authApiMode") === "true";
+    setUseApiMode(apiMode);
+    
+    // APIモードの場合、初期ユーザーリストを取得
+    if (apiMode) {
+      userApi.getUsers().then((apiUsers) => {
+        if (apiUsers.length > 0) {
+          setUsers(apiUsers);
+        }
+      }).catch((error) => {
+        console.warn("APIからユーザー一覧を取得できませんでした。モックデータを使用します。", error);
+      });
+    }
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -378,6 +479,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       submitKycRequest,
       updateKycStatus,
       updateProfile,
+      isLoading,
     }),
     [
       currentUser,
@@ -389,6 +491,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       submitKycRequest,
       updateKycStatus,
       updateProfile,
+      isLoading,
     ],
   );
 
